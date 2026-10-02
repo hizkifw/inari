@@ -37,7 +37,8 @@ run anything kon can, as the user inari runs as. Trust accordingly.
 3. Invite the bot with the `bot` and `applications.commands` scopes and the
    View Channels, Send Messages, Send Messages in Threads, and Read Message
    History permissions.
-4. Install inari:
+4. Install inari: download an archive for your platform from
+   [releases](https://github.com/hizkifw/inari/releases), or build it with Go:
 
    ```sh
    go install github.com/hizkifw/inari/cmd/inari@latest
@@ -139,7 +140,11 @@ make check            # gofmt, vet, shuffled tests
 make test-race        # race detector
 make test-kon KON=…   # round trip with a real kon acp
 make build            # bin/inari
+make release VERSION=v0.1.0  # every release archive, into dist/
 ```
+
+Pushing a `vX.Y.Z` tag publishes a release; see Releases in
+[AGENTS.md](AGENTS.md).
 
 ## License
 

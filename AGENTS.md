@@ -25,3 +25,33 @@ A new connector is a package beside `internal/discord` that implements
 Conventions follow kon: comments explain why, in complete sentences. Run
 `make check` before considering a change done, and `make test-race` for
 anything concurrent.
+
+## Releases
+
+Pushing a `vX.Y.Z` tag publishes a release: `.github/workflows/ci.yml` builds
+the archives for every target and runs `gh release create` with the tag's
+message as the release notes. `make tag [BUMP=patch|minor|major]` has
+`kon run` follow these steps:
+
+1. Check both `git tag` and `git ls-remote --tags origin` and pick the next
+   version that does not collide with either.
+2. Format the tag as semver with a `v` prefix, e.g. `v0.1.4`.
+3. Write the tag message as a summary of the changes between the previous
+   tag and this one, for inari's users, in this format:
+
+   ```
+   vX.Y.Z
+
+   ## Section
+
+   - **Headline**: short description
+   - **Headline**: short description
+   ```
+
+   The first line is the version, each `##` section groups related commits,
+   and each bullet pairs a bold headline with a short description.
+4. Create the tag with `git tag -a --cleanup=whitespace -F <file>`: the
+   default cleanup strips every line starting with `#`, which drops Markdown
+   headings.
+5. Do not push the tag. Pushing publishes the release, so leave that to a
+   person.

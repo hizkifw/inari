@@ -20,6 +20,9 @@ import (
 	"github.com/hizkifw/inari/internal/store"
 )
 
+// version is set at release by -ldflags "-X main.version=vX.Y.Z".
+var version string
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "inari:", err)
@@ -34,7 +37,12 @@ func run() error {
 	}
 	flag.StringVar(&path, "config", path, "path to config.json")
 	debugLog := flag.Bool("debug", false, "log debug messages")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("inari", buildVersion())
+		return nil
+	}
 
 	level := slog.LevelInfo
 	if *debugLog {
@@ -50,7 +58,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open session store: %w", err)
 	}
-	h := hub.New(hub.Kon{Command: cfg.Kon.Command, Args: cfg.Kon.Args}, version(), st, log)
+	h := hub.New(hub.Kon{Command: cfg.Kon.Command, Args: cfg.Kon.Args}, buildVersion(), st, log)
 	defer h.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -88,8 +96,13 @@ func run() error {
 	return errors.Join(all...)
 }
 
-func version() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+// buildVersion is the release's version, or the module version go install
+// records, or "dev" for a build from a checkout.
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}
 	return "dev"
