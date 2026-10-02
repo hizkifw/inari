@@ -71,7 +71,7 @@ func TestRunDeliversTheFinalMessageAsANotice(t *testing.T) {
 	rec.expect(t,
 		`notice test:home "⏰ cron job standup finished"`,
 		// Only the run's last message reaches home, tagged as a notice.
-		`post test:home "echo: [cron notice: standup] done!"`)
+		`post test:home "echo: [cron notice: standup] done!\n\n(This job repeats on the schedule @daily; the next one is at`)
 	// A run's session is not one to resume.
 	data, _ := os.ReadFile(sessions)
 	if strings.Contains(string(data), "cron:") {
@@ -102,7 +102,7 @@ func TestRunStopsAJobThatRunsTooLong(t *testing.T) {
 	j.Prompt = "slow"
 	r.Run(context.Background(), j, time.Now())
 	rec.expect(t, `notice`,
-		`post test:home "echo: [cron notice: stuck] The job was stopped after running for 100ms. Its last message:\n\nLooking"`)
+		`post test:home "echo: [cron notice: stuck] The job was stopped after running for 100ms. Its last message:\n\nLooking\n\n(This job repeats`)
 }
 
 func TestReminderGoesStraightToHome(t *testing.T) {
@@ -112,7 +112,7 @@ func TestReminderGoesStraightToHome(t *testing.T) {
 	r.Run(context.Background(), j, time.Now())
 	rec.expect(t,
 		`notice test:home "⏰ reminder deploy"`,
-		`post test:home "echo: [reminder: deploy] Remind Alice about the deploy."`)
+		`post test:home "echo: [reminder: deploy] Remind Alice about the deploy.\n\n(This was a one-off reminder: it is now removed and will not come again.)"`)
 	// Nothing ran: no session was opened for the reminder.
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -127,4 +127,44 @@ func TestLateReminderSaysSo(t *testing.T) {
 	j.Kind, j.Prompt = KindReminder, "Stretch."
 	r.Run(context.Background(), j, time.Now().Add(-time.Hour))
 	rec.expect(t, `notice`, `post test:home "echo: [reminder: late] Stretch.\n\n(This reminder was due at`)
+}
+
+func TestNoticesSayWhetherTheJobComesAgain(t *testing.T) {
+	r, rec, _ := newRunner(t, time.Minute)
+	once := job(t, "once", "")
+	once.At, once.Prompt = time.Now(), "tell a story"
+	r.Run(context.Background(), once, once.At)
+	rec.expect(t, `notice`, `post test:home "echo: [cron notice: once] done!\n\n(This was a one-off job: it is now removed and will not come again.)"`)
+
+	daily := job(t, "daily", "@daily")
+	daily.Kind, daily.Prompt = KindReminder, "Stretch."
+	r.Run(context.Background(), daily, time.Now())
+	rec.expect(t, `notice`, `post test:home "echo: [reminder: daily] Stretch.\n\n(This reminder repeats on the schedule @daily; the next one is at`)
+}
+
+func TestOneOffJobSessionIsToldNoRunFollows(t *testing.T) {
+	r, rec, _ := newRunner(t, time.Minute)
+	j := job(t, "probe", "")
+	j.At, j.Prompt = time.Now(), "instructions?"
+	r.Run(context.Background(), j, j.At)
+	rec.expect(t, `notice`)
+	if got := <-rec.events; !strings.Contains(got, "do not promise a follow-up") {
+		t.Fatalf("one-off job session was told %s", got)
+	}
+}
+
+func TestUsageNamesTheCommandAndTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		t.Skip(err)
+	}
+	got := Usage("/opt/my inari", loc)
+	for _, want := range []string{"`'/opt/my inari' cron`", "Times are in Asia/Jakarta.", "\n'/opt/my inari' cron remove standup"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("usage does not say %s:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "{{") || strings.HasSuffix(got, "\n") {
+		t.Fatalf("usage is not filled in or trimmed:\n%s", got)
+	}
 }

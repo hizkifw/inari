@@ -6,6 +6,7 @@ package hub
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,14 +48,16 @@ type Route struct {
 
 // chatInstructions tells every session how the hub relays it, since the
 // [name] prefix is the hub's doing.
-const chatInstructions = `You are talking with people in a group chat, relayed to you by inari. Several people may share this conversation. Each message starts with its author's name in brackets, such as "[alice] can you check the build?"; address people by name when it helps, and do not start your own replies with a name in brackets. A message that arrives while you work is delivered between your steps.`
+//
+//go:embed instructions.txt
+var chatInstructions string
 
 // instructions are what a new session of r is told.
 func (h *Hub) instructions(r Route) string {
 	if r.Detached {
 		return r.Instructions
 	}
-	return strings.TrimSpace(chatInstructions + "\n\n" + h.extra + "\n\n" + r.Instructions)
+	return strings.TrimSpace(strings.TrimSpace(chatInstructions) + "\n\n" + h.extra + "\n\n" + r.Instructions)
 }
 
 // SetInstructions adds to what every chat session is told, after the hub's

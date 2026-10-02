@@ -2,10 +2,12 @@ package cron
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/hizkifw/inari/internal/hub"
@@ -82,7 +84,7 @@ func (r *Runner) Run(ctx context.Context, j Job, due time.Time) {
 		report = r.wait(ctx, key, ru)
 	}
 	r.log.Info("job finished", "job", j.Name)
-	r.deliver(ctx, j, report)
+	r.deliver(ctx, j, report+"\n\n("+recurrence(j, due)+")")
 }
 
 // wait waits for the run's turn to end, stopping it after the timeout, and
@@ -135,6 +137,7 @@ func (r *Runner) remind(ctx context.Context, j Job, due time.Time) {
 	if time.Since(due) > time.Minute {
 		text += fmt.Sprintf("\n\n(This reminder was due at %s and comes late, because inari was not running then.)", due.Format("Mon 2006-01-02 15:04 MST"))
 	}
+	text += "\n\n(" + recurrence(j, due) + ")"
 	r.send(ctx, j, "⏰ reminder "+j.Name, "reminder: "+j.Name, text)
 }
 
@@ -194,25 +197,62 @@ func jobInstructions(j Job, due time.Time, late bool) string {
 	if late {
 		b.WriteString(" This run starts late, because inari was not running when it was due.")
 	}
+	if next := nextRun(j, due); next.IsZero() {
+		b.WriteString(" This job runs once and is removed, so no later run will pick up where this one stops: do not promise a follow-up, and say plainly what is left undone.")
+	} else {
+		fmt.Fprintf(&b, " The job runs again at %s, but that run starts in a new, empty session and will not see this one.", next.Format("Mon 2006-01-02 15:04 MST"))
+	}
 	return b.String()
 }
+
+// recurrence says whether j comes again. Without it, the home agent tends
+// to read a one-off job's "not found yet" as something a later run will
+// follow up on.
+func recurrence(j Job, due time.Time) string {
+	what := "job"
+	if j.Reminder() {
+		what = "reminder"
+	}
+	next := nextRun(j, due)
+	if next.IsZero() {
+		return fmt.Sprintf("This was a one-off %s: it is now removed and will not come again.", what)
+	}
+	return fmt.Sprintf("This %s repeats on the schedule %s; the next one is at %s.", what, j.Schedule, next.Format("Mon 2006-01-02 15:04 MST"))
+}
+
+// nextRun is when j runs after the run due at due, or zero when it does
+// not. A late run counts from now, as the scheduler does.
+func nextRun(j Job, due time.Time) time.Time {
+	when, err := j.When()
+	if err != nil || when.Once() {
+		return time.Time{}
+	}
+	now := time.Now().In(due.Location())
+	if now.Before(due) {
+		now = due
+	}
+	return when.Next(now)
+}
+
+// usage is the template of what Usage says, kept as text so it reads as
+// the session sees it.
+//
+//go:embed usage.txt
+var usageText string
+
+var usage = template.Must(template.New("usage").Parse(usageText))
 
 // Usage tells chat sessions how to schedule jobs. exe is the inari to run,
 // and loc where schedules are read.
 func Usage(exe string, loc *time.Location) string {
-	cmd := shellQuote(exe) + " cron"
-	return fmt.Sprintf(`You can schedule jobs and reminders with `+"`%[1]s`"+`, at the times a schedule names:
-
-- A job runs its prompt in a new, empty kon session, in the directory you add it from. When a run finishes, its final message comes back to the home channel as a message starting with "[cron notice: NAME]". Write a job's prompt so it stands on its own, since its session starts empty.
-- A reminder (add --reminder) runs nothing: at its time, its text comes back to the home channel as a message starting with "[reminder: NAME]". Write it as a note to yourself: what to remind whom of, and why.
-
-Messages starting with "[cron notice: NAME]" or "[reminder: NAME]" are from your own schedule, not from a person; act on them and tell the channel what matters. Times are in %[2]s. Run `+"`%[1]s --help`"+` for usage. For example:
-
-%[1]s add --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits in this repository."
-%[1]s add --reminder --name deploy --in 2h "Remind Alice to check whether the deploy finished."
-%[1]s add --reminder --name review --at "2026-10-05 14:00" "Bob asked to be reminded to review the release notes."
-%[1]s list
-%[1]s remove standup`, cmd, loc)
+	var b strings.Builder
+	data := struct {
+		Cmd      string
+		Location *time.Location
+	}{shellQuote(exe) + " cron", loc}
+	// The template is fixed and its data is plain text, so it cannot fail.
+	usage.Execute(&b, data)
+	return strings.TrimSpace(b.String())
 }
 
 // shellQuote quotes s for a POSIX shell when it needs it.

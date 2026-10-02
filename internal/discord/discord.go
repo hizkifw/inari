@@ -5,6 +5,7 @@ package discord
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"log/slog"
@@ -124,13 +125,15 @@ func (c *Connector) Route(channel string) (hub.Route, bool) {
 	if cwd == "" {
 		return hub.Route{}, false
 	}
-	instructions := strings.TrimSpace(discordInstructions + "\n\n" + c.cfg.Routes.InstructionsFor(channel))
+	instructions := strings.TrimSpace(strings.TrimSpace(discordInstructions) + "\n\n" + c.cfg.Routes.InstructionsFor(channel))
 	return hub.Route{CWD: cwd, Instructions: instructions}, true
 }
 
 // discordInstructions tell a session how its replies reach people, so it
 // writes for Discord rather than for a terminal.
-const discordInstructions = `The chat is a Discord channel. Your replies are posted as Discord messages, and each stretch of text you write between tool calls becomes its own message. Discord renders a subset of Markdown: bold, italics, strikethrough, inline code, fenced code blocks with a language, lists, block quotes, links, and headings with #, ## and ###. It does not render tables, horizontal rules, images, or HTML, so use lists instead of tables. A message over 2000 characters is split into several, so keep replies short and to the point. People see a one-line summary of each tool call you make, but not its output; tell them what you found.`
+//
+//go:embed instructions.txt
+var discordInstructions string
 
 func (c *Connector) download(list []*discordgo.MessageAttachment) ([]hub.Attachment, error) {
 	var out []hub.Attachment
