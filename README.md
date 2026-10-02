@@ -140,3 +140,7 @@ make test-race        # race detector
 make test-kon KON=…   # round trip with a real kon acp
 make build            # bin/inari
 ```
+
+## License
+
+MIT
