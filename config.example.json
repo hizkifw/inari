@@ -1,5 +1,6 @@
 {
   "kon": {"command": "kon", "args": ["acp"]},
+  "cron": {"home": "discord:222222222222222222", "timezone": "Asia/Singapore"},
   "connectors": {
     "discord": {
       "token_env": "INARI_DISCORD_TOKEN",

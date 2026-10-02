@@ -10,12 +10,14 @@ Each package owns one boundary:
 
 | Package | Owns | Must not own |
 | --- | --- | --- |
-| `cmd/inari` | startup wiring and flags | business logic |
+| `cmd/inari` | startup wiring, flags, and the `upgrade` and `cron` commands | business logic |
 | `internal/acp` | the ACP client: JSON-RPC over stdio, wire types, kon's extensions | conversations or chat |
 | `internal/hub` | conversations to sessions, turn tracking, steering, gathering a turn into posts | anything platform-specific |
 | `internal/discord` | the Discord connector: gateway, slash commands, rendering | session or turn semantics |
 | `internal/config` | config.json, shared `Access` and `Routes`, one section per connector | runtime state |
 | `internal/store` | the conversation-to-session file | session contents |
+| `internal/cron` | job files, schedules, and running a job through the hub into a home notice | chat platforms or the CLI |
+| `internal/acp/acptest` | a scripted kon acp for tests, served by the test binary | anything a build ships |
 | `internal/selfupdate` | finding, verifying, and installing releases over the executable | CLI parsing |
 | `internal/buildinfo` | the build's version and the User-Agent | configuration |
 

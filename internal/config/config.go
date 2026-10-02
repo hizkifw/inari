@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Config is the whole of config.json.
@@ -24,7 +25,30 @@ type Config struct {
 	// belongs to. It defaults to $XDG_STATE_HOME/inari.
 	StateDir   string     `json:"state_dir"`
 	Connectors Connectors `json:"connectors"`
+	Cron       Cron       `json:"cron"`
 }
+
+// Cron configures jobs kon schedules with `inari cron`. With no Home, cron
+// is off.
+type Cron struct {
+	// Home is the conversation a job's final message is delivered to, as
+	// "<connector>:<channel>", such as "discord:123".
+	Home string `json:"home"`
+	// Timezone is where schedules are read, as an IANA name such as
+	// "Asia/Singapore". It defaults to the machine's.
+	Timezone string `json:"timezone"`
+	// Timeout stops a run that takes longer, as a Go duration such as
+	// "30m". It defaults to an hour.
+	Timeout string `json:"timeout"`
+
+	// Location and Limit are Timezone and Timeout, resolved.
+	Location *time.Location `json:"-"`
+	Limit    time.Duration  `json:"-"`
+}
+
+// ConfigEnv names the config file to kon, so an `inari cron` that kon runs
+// reads the config, and so the jobs, of the inari that started it.
+const ConfigEnv = "INARI_CONFIG"
 
 // Kon is how inari starts the agent.
 type Kon struct {
@@ -171,19 +195,59 @@ func parse(data []byte) (*Config, error) {
 	return &c, nil
 }
 
-func (c *Config) finish() error {
-	if c.Kon.Command == "" {
-		c.Kon.Command = "kon"
+// LoadCron reads only what `inari cron` needs: the state directory and the
+// cron section. It skips the connectors, so it works without their secrets.
+func LoadCron(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	if c.Kon.Args == nil {
-		c.Kon.Args = []string{"acp"}
+	c, err := parse(data)
+	if err == nil {
+		err = c.finishState()
 	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
+}
+
+func (c *Config) finishState() error {
 	if c.StateDir == "" {
 		dir, err := stateHome()
 		if err != nil {
 			return err
 		}
 		c.StateDir = filepath.Join(dir, "inari")
+	}
+	c.Cron.Location = time.Local
+	if c.Cron.Timezone != "" {
+		loc, err := time.LoadLocation(c.Cron.Timezone)
+		if err != nil {
+			return fmt.Errorf("cron: timezone: %w", err)
+		}
+		c.Cron.Location = loc
+	}
+	c.Cron.Limit = time.Hour
+	if c.Cron.Timeout != "" {
+		d, err := time.ParseDuration(c.Cron.Timeout)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("cron: timeout %q is not a positive duration", c.Cron.Timeout)
+		}
+		c.Cron.Limit = d
+	}
+	return nil
+}
+
+func (c *Config) finish() error {
+	if err := c.finishState(); err != nil {
+		return err
+	}
+	if c.Kon.Command == "" {
+		c.Kon.Command = "kon"
+	}
+	if c.Kon.Args == nil {
+		c.Kon.Args = []string{"acp"}
 	}
 	if c.Connectors == (Connectors{}) {
 		return errors.New("no connector is configured")
@@ -197,6 +261,19 @@ func (c *Config) finish() error {
 		}
 		if err := d.Routes.validate(); err != nil {
 			return fmt.Errorf("discord: %w", err)
+		}
+	}
+	if home := c.Cron.Home; home != "" {
+		connector, channel, _ := strings.Cut(home, ":")
+		var routes *Routes
+		if connector == "discord" && c.Connectors.Discord != nil {
+			routes = &c.Connectors.Discord.Routes
+		}
+		if routes == nil || channel == "" {
+			return fmt.Errorf("cron: home %q names no configured connector; write it as \"discord:<channel id>\"", home)
+		}
+		if routes.CWD(channel) == "" {
+			return fmt.Errorf("cron: home %q has no working directory; give the channel a cwd or set default_cwd", home)
 		}
 	}
 	return nil

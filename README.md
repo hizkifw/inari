@@ -24,6 +24,9 @@ run anything kon can, as the user inari runs as. Trust accordingly.
   seconds. The typing indicator shows while kon works.
 - **Background jobs.** When a job kon started finishes after its turn, kon
   takes a turn of its own and the result is posted to the channel.
+- **Cron jobs.** kon schedules its own jobs with `inari cron`. Each run is
+  a fresh session, and its final message comes back to a home channel for
+  the agent there to relay. See [Cron jobs](#cron-jobs).
 - **Sessions survive restarts.** inari remembers each channel's session in
   `$XDG_STATE_HOME/inari/sessions.json` and resumes it.
 
@@ -139,6 +142,46 @@ kon's own flags shape every session too. Pass them in `kon.args`:
 
 `--system-prompt-override` replaces kon's built-in prompt, which is written for
 a coding agent in a terminal, while keeping everything above.
+
+## Cron jobs
+
+Name a home channel to turn cron on:
+
+```json
+"cron": {"home": "discord:<channel id>", "timezone": "Asia/Singapore", "timeout": "1h"}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `cron.home` | The channel a job's report goes to, as `discord:<channel id>`. It must be a channel inari serves. |
+| `cron.timezone` | Where schedules are read, as an IANA name. Defaults to the machine's. |
+| `cron.timeout` | How long a run may take before it is stopped. Defaults to `1h`. |
+
+With cron on, every session is told it can schedule jobs, so you can just
+ask: "remind me to check the deploy in two hours", or "every weekday at 9,
+summarize yesterday's commits". kon runs `inari cron` itself:
+
+```sh
+inari cron add --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits."
+inari cron add --name deploy-check --in 2h "Check whether the deploy finished."
+inari cron list
+inari cron remove standup
+```
+
+A schedule is a cron expression, `@hourly`/`@daily`/`@weekly`/`@monthly`,
+`@every 30m`, or a one-shot `--at` time or `--in` delay. A job keeps the
+directory it was added from.
+
+At each due time the job's prompt runs in a new, empty kon session, from the
+author `[cron:NAME]`. When it finishes, its final message is sent to the home
+channel's session as `[cron notice: NAME] …`, steering a turn that is running
+or starting one, and the agent there relays it to the channel. A small
+`⏰ cron job NAME finished` line shows in the channel as it arrives.
+
+- A run that was due while inari was not running is skipped, except a
+  one-shot job, which runs late.
+- A job whose last run is still going skips its next one.
+- Jobs are plain files in `$XDG_STATE_HOME/inari/cron/`, one per job.
 
 ## Slash commands
 

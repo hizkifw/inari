@@ -115,3 +115,36 @@ func TestExampleConfigParses(t *testing.T) {
 		t.Fatal("example configures no discord connector")
 	}
 }
+
+func TestCronHome(t *testing.T) {
+	dir := t.TempDir()
+	base := `"connectors":{"discord":{"token":"x","channels":{"1":{"cwd":"` + dir + `"}}}}`
+	c, err := Load(write(t, `{`+base+`,"cron":{"home":"discord:1","timezone":"Asia/Singapore","timeout":"30m"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Cron.Location.String() != "Asia/Singapore" || c.Cron.Limit.Minutes() != 30 {
+		t.Fatalf("cron = %+v", c.Cron)
+	}
+	for name, cron := range map[string]string{
+		"unknown connector": `{"home":"telegram:1"}`,
+		"no channel":        `{"home":"discord"}`,
+		"unserved channel":  `{"home":"discord:2"}`,
+		"bad timezone":      `{"home":"discord:1","timezone":"Mars/Olympus"}`,
+		"bad timeout":       `{"home":"discord:1","timeout":"soon"}`,
+	} {
+		if _, err := Load(write(t, `{`+base+`,"cron":`+cron+`}`)); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+func TestLoadCronNeedsNoConnectors(t *testing.T) {
+	c, err := LoadCron(write(t, `{"cron":{"home":"discord:1"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.StateDir == "" || c.Cron.Location == nil {
+		t.Fatalf("cron config = %+v", c)
+	}
+}

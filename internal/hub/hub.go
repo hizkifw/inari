@@ -39,6 +39,10 @@ type Message struct {
 type Route struct {
 	CWD          string
 	Instructions string
+	// Detached marks a conversation no person is in, such as a cron job's
+	// run: its session is never saved or resumed, it is told only
+	// Instructions, and Reset forgets the conversation entirely.
+	Detached bool
 }
 
 // chatInstructions tells every session how the hub relays it, since the
@@ -46,8 +50,20 @@ type Route struct {
 const chatInstructions = `You are talking with people in a group chat, relayed to you by inari. Several people may share this conversation. Each message starts with its author's name in brackets, such as "[alice] can you check the build?"; address people by name when it helps, and do not start your own replies with a name in brackets. A message that arrives while you work is delivered between your steps.`
 
 // instructions are what a new session of r is told.
-func (r Route) instructions() string {
-	return strings.TrimSpace(chatInstructions + "\n\n" + r.Instructions)
+func (h *Hub) instructions(r Route) string {
+	if r.Detached {
+		return r.Instructions
+	}
+	return strings.TrimSpace(chatInstructions + "\n\n" + h.extra + "\n\n" + r.Instructions)
+}
+
+// SetInstructions adds to what every chat session is told, after the hub's
+// own and before its connector's, such as how to schedule jobs. Call it
+// before the first message.
+func (h *Hub) SetInstructions(text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.extra = strings.TrimSpace(text)
 }
 
 // Attachment is a file sent with a message.
@@ -131,7 +147,9 @@ type Hub struct {
 	store   *store.Store
 	log     *slog.Logger
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// extra is what SetInstructions adds.
+	extra   string
 	outs    map[string]Output
 	client  *acp.Client
 	convs   map[string]*conv
@@ -158,6 +176,8 @@ type conv struct {
 	// session that never receives a prompt, so one opened only to list
 	// models is remembered once it is prompted.
 	saved bool
+	// detached is Route.Detached for the open session.
+	detached bool
 	// turns counts turns running or waiting: prompts sent and turns kon
 	// started itself.
 	turns int
@@ -203,9 +223,12 @@ func (h *Hub) Handle(ctx context.Context, m Message) error {
 	if err != nil {
 		return err
 	}
-	text := fmt.Sprintf("[%s] %s", m.Author, m.Text)
+	// A name with brackets in it could pass for another tag, such as a
+	// cron notice's.
+	author := strings.NewReplacer("[", "", "]", "").Replace(m.Author)
+	text := fmt.Sprintf("[%s] %s", author, m.Text)
 	if strings.TrimSpace(m.Text) == "" {
-		text = fmt.Sprintf("[%s] sent %d attachment(s).", m.Author, len(m.Attachments))
+		text = fmt.Sprintf("[%s] sent %d attachment(s).", author, len(m.Attachments))
 	}
 	h.mu.Lock()
 	busy, id := c.turns > 0, c.sessionID
@@ -345,9 +368,28 @@ func (h *Hub) Reset(ctx context.Context, conv string) error {
 		}
 		h.mu.Lock()
 		h.detach(c, End{StopReason: acp.StopCancelled, Idle: true})
+		detached := c.detached
+		if detached {
+			delete(h.convs, conv)
+		}
 		h.mu.Unlock()
+		if detached {
+			return nil
+		}
 	}
 	return h.store.Delete(conv)
+}
+
+// Notice posts a line from inari, not from kon, to the conversation.
+func (h *Hub) Notice(key, text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c := h.convs[key]
+	if c == nil {
+		c = &conv{key: key, out: &outbox{}, toolAt: map[string]int{}}
+		h.convs[key] = c
+	}
+	h.notice(c, text)
 }
 
 // Options returns the session's config options, opening it if need be.
@@ -448,7 +490,7 @@ func (h *Hub) open(ctx context.Context, key string, route Route) (*conv, *acp.Cl
 	var s acp.Session
 	resumed := false
 	b, known := h.store.Get(key)
-	if known && b.CWD == cwd {
+	if known && b.CWD == cwd && !route.Detached {
 		s, err = cl.ResumeSession(ctx, b.SessionID, cwd)
 		resumed = err == nil
 		if err != nil {
@@ -459,14 +501,15 @@ func (h *Hub) open(ctx context.Context, key string, route Route) (*conv, *acp.Cl
 		}
 	}
 	if s.SessionID == "" {
-		s, err = cl.NewSession(ctx, cwd, route.instructions())
+		s, err = cl.NewSession(ctx, cwd, h.instructions(route))
 		if err != nil {
 			return nil, nil, fmt.Errorf("start a kon session: %w", err)
 		}
 	}
 	h.mu.Lock()
 	delete(h.session, c.sessionID)
-	c.sessionID, c.cwd, c.client, c.options, c.saved = s.SessionID, cwd, cl, s.ConfigOptions, resumed
+	// A detached session counts as saved so that it never is.
+	c.sessionID, c.cwd, c.client, c.options, c.saved, c.detached = s.SessionID, cwd, cl, s.ConfigOptions, resumed || route.Detached, route.Detached
 	h.session[s.SessionID] = c
 	h.mu.Unlock()
 	h.log.Info("session open", "conv", key, "session", s.SessionID, "cwd", cwd)

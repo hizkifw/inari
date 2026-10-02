@@ -109,11 +109,19 @@ func (c *Connector) messageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 }
 
-// allowed returns channel's route when user may use kon there. A channel
-// with no directory is not served, whoever asks.
+// allowed returns channel's route when user may use kon there.
 func (c *Connector) allowed(user, channel string) (hub.Route, bool) {
+	if !c.cfg.Access.Allows(user, channel) {
+		return hub.Route{}, false
+	}
+	return c.Route(channel)
+}
+
+// Route is how channel's sessions start, whoever is asking. A channel with
+// no directory is not served.
+func (c *Connector) Route(channel string) (hub.Route, bool) {
 	cwd := c.cfg.CWD(channel)
-	if cwd == "" || !c.cfg.Access.Allows(user, channel) {
+	if cwd == "" {
 		return hub.Route{}, false
 	}
 	instructions := strings.TrimSpace(discordInstructions + "\n\n" + c.cfg.Routes.InstructionsFor(channel))

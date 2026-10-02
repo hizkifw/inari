@@ -1,0 +1,196 @@
+package cron
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hizkifw/inari/internal/hub"
+)
+
+// connector is the hub connector a job's run is a conversation of, as
+// "cron:<job>.<n>".
+const connector = "cron"
+
+// Target is the conversation a job's final message is delivered to.
+type Target struct {
+	Conv  string
+	Route hub.Route
+}
+
+// Runner runs jobs through the hub: each run is a detached conversation of
+// its own, and its final message is delivered to the home conversation as a
+// notice. It is the hub's Output for those conversations.
+type Runner struct {
+	hub     *hub.Hub
+	home    Target
+	timeout time.Duration
+	log     *slog.Logger
+
+	mu   sync.Mutex
+	runs map[string]*run
+}
+
+// run is a job's conversation while it runs.
+type run struct {
+	// final is the latest text kon wrote, which is its last message once
+	// the turn ends.
+	final string
+	done  chan hub.End
+}
+
+// NewRunner returns a runner delivering to home that stops a run after
+// timeout. Register it with the hub as the "cron" connector.
+func NewRunner(h *hub.Hub, home Target, timeout time.Duration, log *slog.Logger) *Runner {
+	r := &Runner{hub: h, home: home, timeout: timeout, log: log.With("component", "cron"), runs: map[string]*run{}}
+	h.Register(connector, r)
+	return r
+}
+
+// Run runs j once, for the time it was due, and delivers its final message.
+func (r *Runner) Run(ctx context.Context, j Job, due time.Time) {
+	key := fmt.Sprintf("%s:%s.%d", connector, j.Name, time.Now().UnixNano())
+	ru := &run{done: make(chan hub.End, 1)}
+	r.mu.Lock()
+	r.runs[key] = ru
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		delete(r.runs, key)
+		r.mu.Unlock()
+		// The run is over, so its session goes; kon keeps the transcript.
+		if err := r.hub.Reset(context.Background(), key); err != nil {
+			r.log.Warn("close job session", "job", j.Name, "err", err)
+		}
+	}()
+
+	r.log.Info("job started", "job", j.Name, "due", due)
+	late := time.Since(due) > time.Minute
+	route := hub.Route{CWD: j.CWD, Instructions: jobInstructions(j, due, late), Detached: true}
+	report := ""
+	if err := r.hub.Handle(ctx, hub.Message{Conv: key, Route: route, Author: "cron:" + j.Name, Text: j.Prompt}); err != nil {
+		report = "The job could not start: " + err.Error()
+	} else {
+		report = r.wait(ctx, key, ru)
+	}
+	r.log.Info("job finished", "job", j.Name)
+	r.deliver(ctx, j, report)
+}
+
+// wait waits for the run's turn to end, stopping it after the timeout, and
+// returns what to report.
+func (r *Runner) wait(ctx context.Context, key string, ru *run) string {
+	timer := time.NewTimer(r.timeout)
+	defer timer.Stop()
+	var end hub.End
+	stopped := false
+	select {
+	case end = <-ru.done:
+	case <-ctx.Done():
+		return "The job was stopped because inari is shutting down."
+	case <-timer.C:
+		stopped = true
+		r.hub.Cancel(key)
+		select {
+		case end = <-ru.done:
+		case <-time.After(30 * time.Second):
+		}
+	}
+	r.mu.Lock()
+	final := strings.TrimSpace(ru.final)
+	r.mu.Unlock()
+	var lead string
+	switch {
+	case stopped:
+		lead = fmt.Sprintf("The job was stopped after running for %v.", r.timeout)
+	case end.Err != nil:
+		lead = "The job failed: " + end.Err.Error()
+	case final == "":
+		lead = "The job finished without a final message."
+	}
+	if lead != "" && final != "" {
+		return lead + " Its last message:\n\n" + final
+	}
+	return lead + final
+}
+
+// deliver hands the report to the home conversation's agent, which relays it
+// to the people there: as steering when it is working, so the report reaches
+// it before its next step, and as a turn of its own otherwise.
+func (r *Runner) deliver(ctx context.Context, j Job, report string) {
+	r.hub.Notice(r.home.Conv, fmt.Sprintf("⏰ cron job %s finished", j.Name))
+	msg := hub.Message{Conv: r.home.Conv, Route: r.home.Route, Author: "cron notice: " + j.Name, Text: report}
+	if err := r.hub.Handle(ctx, msg); err != nil {
+		r.log.Error("deliver job report", "job", j.Name, "err", err)
+	}
+}
+
+// TurnStarted is part of hub.Output.
+func (r *Runner) TurnStarted(string) {}
+
+// Post keeps the run's latest text, which becomes its final message.
+func (r *Runner) Post(conv string, p hub.Post) {
+	if p.Notice || strings.TrimSpace(p.Text) == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ru := r.runs[conv]; ru != nil {
+		ru.final = p.Text
+	}
+}
+
+// TurnEnded ends the run once its conversation is idle.
+func (r *Runner) TurnEnded(conv string, e hub.End) {
+	if !e.Idle {
+		return
+	}
+	r.mu.Lock()
+	ru := r.runs[conv]
+	r.mu.Unlock()
+	if ru == nil {
+		return
+	}
+	select {
+	case ru.done <- e:
+	default:
+	}
+}
+
+// jobInstructions tell a job's session what it is, since it starts empty
+// and nobody watches it.
+func jobInstructions(j Job, due time.Time, late bool) string {
+	when, _ := j.When()
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are running the scheduled job %q (schedule: %s) for inari, due at %s. ", j.Name, when, due.Format("Mon 2006-01-02 15:04 MST"))
+	b.WriteString("No one reads this session while it runs, and no one can answer questions. ")
+	b.WriteString("When you finish, your final message is delivered as a notice to the agent of the team's home chat, which relays it to the people there. ")
+	b.WriteString("Make that final message a short, self-contained report of what you found or did.")
+	if late {
+		b.WriteString(" This run starts late, because inari was not running when it was due.")
+	}
+	return b.String()
+}
+
+// Usage tells chat sessions how to schedule jobs. exe is the inari to run,
+// and loc where schedules are read.
+func Usage(exe string, loc *time.Location) string {
+	cmd := shellQuote(exe) + " cron"
+	return fmt.Sprintf(`You can schedule jobs with `+"`%[1]s`"+`. A job runs its prompt in a new, empty kon session, in the directory you add it from, at the times its schedule names. When a run finishes, its final message comes back to the home channel as a message starting with "[cron notice: NAME]": a report from your own job, not a message from a person, which you relay to the channel. Write a job's prompt so it stands on its own, since its session starts empty. Times are in %[2]s. Run `+"`%[1]s --help`"+` for usage. For example:
+
+%[1]s add --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits in this repository."
+%[1]s add --name deploy-check --in 2h "Check whether the deploy to production finished, and report its status."
+%[1]s list
+%[1]s remove standup`, cmd, loc)
+}
+
+// shellQuote quotes s for a POSIX shell when it needs it.
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`!*?[]{}()<>|&;#~") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
