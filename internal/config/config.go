@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -119,13 +120,28 @@ func (r Routes) validate() error {
 	return nil
 }
 
-// DefaultPath is where inari looks for its config: $XDG_CONFIG_HOME/inari.
+// DefaultPath is where inari looks for its config: $XDG_CONFIG_HOME/inari,
+// or ~/.config/inari, on macOS too, as kon does; on Windows, %APPDATA%\inari.
 func DefaultPath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := configHome()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "inari", "config.json"), nil
+}
+
+func configHome() (string, error) {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(dir) {
+		return dir, nil
+	}
+	if runtime.GOOS == "windows" {
+		return os.UserConfigDir()
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config"), nil
 }
 
 // Load reads, defaults, and validates the config at path. Unknown fields are
@@ -189,6 +205,10 @@ func (c *Config) finish() error {
 func stateHome() (string, error) {
 	if dir := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(dir) {
 		return dir, nil
+	}
+	if runtime.GOOS == "windows" {
+		// %LOCALAPPDATA%, which stays on this machine.
+		return os.UserCacheDir()
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

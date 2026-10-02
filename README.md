@@ -37,15 +37,28 @@ run anything kon can, as the user inari runs as. Trust accordingly.
 3. Invite the bot with the `bot` and `applications.commands` scopes and the
    View Channels, Send Messages, Send Messages in Threads, and Read Message
    History permissions.
-4. Install inari: download an archive for your platform from
-   [releases](https://github.com/hizkifw/inari/releases), or build it with Go:
+4. Install inari. On Linux and macOS:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/hizkifw/inari/main/scripts/install.sh | sh
+   ```
+
+   On Windows, in PowerShell:
+
+   ```powershell
+   iwr -useb https://raw.githubusercontent.com/hizkifw/inari/main/scripts/install.ps1 | iex
+   ```
+
+   The installers verify the release's checksum. Set `INARI_VERSION` for a
+   specific release, or `INARI_INSTALL_DIR` for another directory than
+   `~/.local/bin` (`%LOCALAPPDATA%\Programs\inari` on Windows). With Go:
 
    ```sh
    go install github.com/hizkifw/inari/cmd/inari@latest
    ```
 
-5. Write `$XDG_CONFIG_HOME/inari/config.json` (usually
-   `~/.config/inari/config.json`), starting from
+5. Write `~/.config/inari/config.json` (`$XDG_CONFIG_HOME/inari` when that
+   is set, `%APPDATA%\inari` on Windows), starting from
    [config.example.json](config.example.json), and run:
 
    ```sh
@@ -54,6 +67,16 @@ run anything kon can, as the user inari runs as. Trust accordingly.
    ```
 
    `inari -config path` reads another file, and `-debug` logs more.
+
+## Upgrading
+
+```sh
+inari upgrade          # install the latest release over this one
+inari upgrade --check  # only report whether there is one
+```
+
+It verifies the download's checksum and that the new binary runs before
+replacing anything. A running inari keeps the old version until it restarts.
 
 ## Configuration
 

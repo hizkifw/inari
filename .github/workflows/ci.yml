@@ -22,6 +22,37 @@ jobs:
       - run: make check
       - run: make test-race
 
+  # Runs the installers against the latest published release, so a change
+  # that breaks them fails here rather than for the next person installing.
+  install:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          INARI_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: |
+          sh scripts/install.sh
+          "$INARI_INSTALL_DIR/inari" --version | grep -E '^inari v[0-9]+\.[0-9]+\.[0-9]+$'
+
+  install-windows:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Windows PowerShell 5.1, which `iwr | iex` usually runs under, is the
+      # one with the encoding and escape quirks the script works around.
+      - shell: powershell
+        env:
+          INARI_INSTALL_DIR: ${{ runner.temp }}\bin
+        run: |
+          Get-Content -Raw scripts/install.ps1 | Invoke-Expression
+          $out = & "$env:INARI_INSTALL_DIR\inari.exe" --version
+          if ($out -notmatch '^inari v\d+\.\d+\.\d+$') { throw "unexpected version output: $out" }
+
   # Builds each release archive the way scripts/release.sh does, so every
   # push checks that each target builds. On a version tag the archives carry
   # the tag's version and are what the release publishes, so it never builds

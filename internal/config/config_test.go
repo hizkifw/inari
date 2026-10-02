@@ -34,6 +34,19 @@ func TestLoadDefaultsAndTokenEnv(t *testing.T) {
 	}
 }
 
+func TestDefaultPathFollowsXDG(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if got, _ := DefaultPath(); got != filepath.Join(dir, "inari", "config.json") {
+		t.Fatalf("DefaultPath = %q", got)
+	}
+	// A relative value is not a base directory, as the XDG spec says.
+	t.Setenv("XDG_CONFIG_HOME", "relative")
+	if got, _ := DefaultPath(); !filepath.IsAbs(got) {
+		t.Fatalf("DefaultPath = %q, want an absolute path", got)
+	}
+}
+
 func TestLoadRejects(t *testing.T) {
 	dir := t.TempDir()
 	for name, body := range map[string]string{

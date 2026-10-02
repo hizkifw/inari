@@ -11,17 +11,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime/debug"
 	"syscall"
 
+	"github.com/hizkifw/inari/internal/buildinfo"
 	"github.com/hizkifw/inari/internal/config"
 	"github.com/hizkifw/inari/internal/discord"
 	"github.com/hizkifw/inari/internal/hub"
 	"github.com/hizkifw/inari/internal/store"
 )
-
-// version is set at release by -ldflags "-X main.version=vX.Y.Z".
-var version string
 
 func main() {
 	if err := run(); err != nil {
@@ -31,6 +28,13 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
+		return runUpgrade(os.Args[2:])
+	}
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "usage: inari [flags]\n       inari upgrade [--check]\n\nflags:")
+		flag.PrintDefaults()
+	}
 	path, err := config.DefaultPath()
 	if err != nil {
 		return err
@@ -39,8 +43,15 @@ func run() error {
 	debugLog := flag.Bool("debug", false, "log debug messages")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	// An argument this build does not know, such as a subcommand from a
+	// newer release, must not start the bot.
+	if flag.NArg() > 0 {
+		flag.Usage()
+		return fmt.Errorf("unknown command %q", flag.Arg(0))
+	}
 	if *showVersion {
-		fmt.Println("inari", buildVersion())
+		// selfupdate checks a downloaded release by this exact line.
+		fmt.Println("inari", buildinfo.Version())
 		return nil
 	}
 
@@ -58,7 +69,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open session store: %w", err)
 	}
-	h := hub.New(hub.Kon{Command: cfg.Kon.Command, Args: cfg.Kon.Args}, buildVersion(), st, log)
+	h := hub.New(hub.Kon{Command: cfg.Kon.Command, Args: cfg.Kon.Args}, buildinfo.Version(), st, log)
 	defer h.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -94,16 +105,4 @@ func run() error {
 	}
 	log.Info("shutting down")
 	return errors.Join(all...)
-}
-
-// buildVersion is the release's version, or the module version go install
-// records, or "dev" for a build from a checkout.
-func buildVersion() string {
-	if version != "" {
-		return version
-	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
-	}
-	return "dev"
 }

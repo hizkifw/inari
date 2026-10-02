@@ -16,6 +16,8 @@ Each package owns one boundary:
 | `internal/discord` | the Discord connector: gateway, slash commands, rendering | session or turn semantics |
 | `internal/config` | config.json, shared `Access` and `Routes`, one section per connector | runtime state |
 | `internal/store` | the conversation-to-session file | session contents |
+| `internal/selfupdate` | finding, verifying, and installing releases over the executable | CLI parsing |
+| `internal/buildinfo` | the build's version and the User-Agent | configuration |
 
 A new connector is a package beside `internal/discord` that implements
 `hub.Output`, builds `hub.Message`s, and keys conversations as
@@ -27,6 +29,11 @@ Conventions follow kon: comments explain why, in complete sentences. Run
 anything concurrent.
 
 ## Releases
+
+`inari upgrade` in every published release downloads assets by the names
+`scripts/release.sh` gives them, parses `checksums.txt` as `checksums.sh`
+writes it, and accepts a download only when `inari --version` prints exactly
+`inari vX.Y.Z`. Changing any of the three breaks upgrades from those releases.
 
 Pushing a `vX.Y.Z` tag publishes a release: `.github/workflows/ci.yml` builds
 the archives for every target and runs `gh release create` with the tag's

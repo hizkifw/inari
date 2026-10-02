@@ -37,7 +37,7 @@ for target in $targets; do
   [ "$os" = windows ] && binary=inari.exe
   echo "building $target"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -buildvcs=false \
-    -ldflags="-s -w -X main.version=$version" -o "$dir/$binary" ./cmd/inari
+    -ldflags="-s -w -X github.com/hizkifw/inari/internal/buildinfo.version=$version" -o "$dir/$binary" ./cmd/inari
   cp "$root/README.md" "$root/LICENSE" "$root/config.example.json" "$dir/"
   if [ "$os" = windows ]; then
     archive="$dist/$name.zip"
