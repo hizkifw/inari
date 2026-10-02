@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/hizkifw/inari/internal/buildinfo"
+	"github.com/hizkifw/inari/internal/daemon"
 	"github.com/hizkifw/inari/internal/selfupdate"
 )
 
@@ -57,7 +58,27 @@ func runUpgrade(args []string) error {
 	if err := updater.Install(ctx, latest, exe); err != nil {
 		return fmt.Errorf("upgrade to %s: %w", latest, err)
 	}
-	// A running inari keeps executing the old file until it restarts.
-	fmt.Printf("upgraded inari %s → %s; restart inari to run it\n", current, latest)
+	fmt.Printf("upgraded inari %s → %s\n", current, latest)
+	restartService()
 	return nil
+}
+
+// restartService moves an inari running as a service onto the new file. A
+// running inari keeps executing the old one until it restarts. When kon runs
+// the upgrade from inside that service, the restart stops this process too,
+// so everything worth saying is printed before it.
+func restartService() {
+	m, err := daemon.Detect()
+	if err != nil {
+		fmt.Println("restart inari to run it")
+		return
+	}
+	fmt.Printf("restarting the %s service, if it is running\n", m.Name())
+	restarted, err := m.Restart()
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "inari: restart the service: %v\n", err)
+	case !restarted:
+		fmt.Println("the service is not running; restart inari to run it")
+	}
 }

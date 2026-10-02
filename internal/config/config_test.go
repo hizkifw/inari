@@ -15,11 +15,10 @@ func write(t *testing.T, body string) string {
 	return path
 }
 
-func TestLoadDefaultsAndTokenEnv(t *testing.T) {
+func TestLoadDefaults(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("INARI_TEST_TOKEN", "secret")
 	t.Setenv("XDG_STATE_HOME", dir)
-	c, err := Load(write(t, `{"connectors":{"discord":{"token_env":"INARI_TEST_TOKEN","default_cwd":"`+dir+`"}}}`))
+	c, err := Load(write(t, `{"connectors":{"discord":{"token":"secret","default_cwd":"`+dir+`"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

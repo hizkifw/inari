@@ -3,7 +3,7 @@
   "cron": {"home": "discord:222222222222222222", "timezone": "Asia/Singapore"},
   "connectors": {
     "discord": {
-      "token_env": "INARI_DISCORD_TOKEN",
+      "token": "your-bot-token",
       "guilds": ["123456789012345678"],
       "access": {
         "users": ["111111111111111111"],

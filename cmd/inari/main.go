@@ -39,10 +39,12 @@ func run() error {
 			return runUpgrade(os.Args[2:])
 		case "cron":
 			return runCron(os.Args[2:], os.Stdin, os.Stdout)
+		case "daemon":
+			return runDaemon(os.Args[2:], os.Stdout)
 		}
 	}
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "usage: inari [flags]\n       inari upgrade [--check]\n       inari cron <command>\n\nflags:")
+		fmt.Fprintln(flag.CommandLine.Output(), "usage: inari [flags]\n       inari upgrade [--check]\n       inari cron <command>\n       inari daemon <command>\n\nflags:")
 		flag.PrintDefaults()
 	}
 	path, err := config.DefaultPath()

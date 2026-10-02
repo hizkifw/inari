@@ -66,10 +66,10 @@ type Connectors struct {
 
 // Discord configures the Discord connector.
 type Discord struct {
-	// Token is the bot token. TokenEnv names an environment variable to read
-	// it from instead, which keeps the secret out of the file.
-	Token    string `json:"token"`
-	TokenEnv string `json:"token_env"`
+	// Token is the bot token. It lives here rather than in the environment
+	// so a service manager, which starts inari without the shell's
+	// environment, runs it with the same config as the shell.
+	Token string `json:"token"`
 	// Guilds lists servers to register slash commands in, where they appear
 	// at once. With none, commands are registered globally.
 	Guilds []string `json:"guilds"`
@@ -253,11 +253,8 @@ func (c *Config) finish() error {
 		return errors.New("no connector is configured")
 	}
 	if d := c.Connectors.Discord; d != nil {
-		if d.Token == "" && d.TokenEnv != "" {
-			d.Token = os.Getenv(d.TokenEnv)
-		}
 		if d.Token == "" {
-			return errors.New("discord: no token; set token or token_env")
+			return errors.New("discord: no token; set token")
 		}
 		if err := d.Routes.validate(); err != nil {
 			return fmt.Errorf("discord: %w", err)

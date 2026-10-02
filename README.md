@@ -65,11 +65,31 @@ run anything kon can, as the user inari runs as. Trust accordingly.
    [config.example.json](config.example.json), and run:
 
    ```sh
-   export INARI_DISCORD_TOKEN=…
    inari
    ```
 
+   The file holds the bot token, so keep it private: `chmod 600` it.
+
    `inari -config path` reads another file, and `-debug` logs more.
+
+## Running in the background
+
+```sh
+inari daemon install    # run inari as a service, at login and after a failure
+inari daemon uninstall  # stop it and remove the service
+```
+
+On Linux this is a systemd user service, `inari.service`; see its logs with
+`journalctl --user -u inari -f`. Other platforms are not supported yet.
+
+`install` checks the config first, then starts the service, and running it
+again replaces the service. The service does not see your shell, so install
+copies what inari needs from it: `PATH` (to find kon) and the `XDG_*`
+directories. Run it from the shell you would run `inari` in, and again after
+changing either. `-config path` and `-debug` are passed on to the service.
+
+A user service stops when you log out unless lingering is on:
+`loginctl enable-linger`.
 
 ## Upgrading
 
@@ -79,7 +99,9 @@ inari upgrade --check  # only report whether there is one
 ```
 
 It verifies the download's checksum and that the new binary runs before
-replacing anything. A running inari keeps the old version until it restarts.
+replacing anything. When inari runs as a service, the upgrade restarts it
+onto the new version, so you can also just ask kon to upgrade inari. Any
+other running inari keeps the old version until it restarts.
 
 ## Configuration
 
@@ -89,7 +111,7 @@ replacing anything. A running inari keeps the old version until it restarts.
   "state_dir": "",
   "connectors": {
     "discord": {
-      "token_env": "INARI_DISCORD_TOKEN",
+      "token": "…",
       "guilds": ["…"],
       "access": {"users": ["…"], "channels": ["…"]},
       "channels": {"…": {"cwd": "/abs/path", "instructions": "…"}},
@@ -104,7 +126,7 @@ replacing anything. A running inari keeps the old version until it restarts.
 | --- | --- |
 | `kon` | How to start kon. Defaults to `kon acp` from PATH. |
 | `state_dir` | Where inari keeps its state. Defaults to `$XDG_STATE_HOME/inari`. |
-| `token` / `token_env` | The bot token, or the environment variable holding it. |
+| `token` | The bot token. |
 | `guilds` | Servers to register slash commands in, where they appear at once. Empty registers them globally, which can take a while to show and also works in DMs. |
 | `access.users` | User IDs trusted in any channel inari serves. |
 | `access.channels` | Channel IDs where everyone is trusted. |
