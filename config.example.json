@@ -1,0 +1,21 @@
+{
+  "kon": {"command": "kon", "args": ["acp"]},
+  "connectors": {
+    "discord": {
+      "token_env": "INARI_DISCORD_TOKEN",
+      "guilds": ["123456789012345678"],
+      "access": {
+        "users": ["111111111111111111"],
+        "channels": ["222222222222222222"]
+      },
+      "channels": {
+        "222222222222222222": {
+          "cwd": "/srv/projects/website",
+          "instructions": "This channel is for the company website. Ask before deploying."
+        }
+      },
+      "default_cwd": "/srv/projects",
+      "instructions": "Keep replies brief."
+    }
+  }
+}
