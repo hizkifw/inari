@@ -16,22 +16,38 @@ import (
 // Job is one scheduled prompt, as its file holds it.
 type Job struct {
 	Name string `json:"name"`
+	// Kind is KindTask, the default, or KindReminder.
+	Kind string `json:"kind,omitempty"`
 	// Schedule is a cron expression, a shorthand, or "@every <duration>".
 	// It is empty for a one-shot job, which has At instead.
 	Schedule string    `json:"schedule,omitempty"`
 	At       time.Time `json:"at,omitzero"`
-	Prompt   string    `json:"prompt"`
+	// Prompt is what a task runs, or what a reminder says.
+	Prompt string `json:"prompt"`
 	// CWD is where the job's session works: where kon was when it added
 	// the job.
 	CWD     string    `json:"cwd"`
 	Created time.Time `json:"created"`
 }
 
+// Kinds of job.
+const (
+	// KindTask runs its prompt in a new session and reports its final
+	// message to the home channel.
+	KindTask = "task"
+	// KindReminder hands its prompt to the home channel's agent as it is,
+	// with no session of its own.
+	KindReminder = "reminder"
+)
+
+// Reminder reports whether the job is a reminder.
+func (j Job) Reminder() bool { return j.Kind == KindReminder }
+
 // key fingerprints what decides the job's runs. Times decoded from JSON
 // carry a fresh location each read, so Job values do not compare equal even
 // when nothing changed.
 func (j Job) key() string {
-	return fmt.Sprintf("%s\x00%s\x00%d\x00%s\x00%s", j.Name, j.Schedule, j.At.UnixNano(), j.Prompt, j.CWD)
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s", j.Name, j.Kind, j.Schedule, j.At.UnixNano(), j.Prompt, j.CWD)
 }
 
 // When is the job's schedule.
@@ -52,6 +68,9 @@ var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 func (j Job) validate() error {
 	if !validName.MatchString(j.Name) {
 		return fmt.Errorf("job name %q must be 1-64 lowercase letters, digits, - or _, starting with a letter or digit", j.Name)
+	}
+	if j.Kind != "" && j.Kind != KindTask && j.Kind != KindReminder {
+		return fmt.Errorf("job kind %q is neither %q nor %q", j.Kind, KindTask, KindReminder)
 	}
 	if strings.TrimSpace(j.Prompt) == "" {
 		return errors.New("a job needs a prompt")

@@ -17,10 +17,12 @@ import (
 
 const cronUsage = `usage: inari cron <command>
 
-Schedule a prompt to run in a new, empty kon session. When a run finishes,
-its final message is delivered to the home channel's agent as a notice.
+Schedule a job: a prompt that runs in a new, empty kon session, whose final
+message is delivered to the home channel's agent as a notice. With
+--reminder, schedule a reminder instead: at its time, PROMPT itself is
+delivered to the home channel's agent, and nothing runs.
 
-  inari cron add --name NAME (--schedule SPEC | --at TIME | --in DURATION) [--cwd DIR] [--replace] PROMPT
+  inari cron add [--reminder] --name NAME (--schedule SPEC | --at TIME | --in DURATION) [--cwd DIR] [--replace] PROMPT
   inari cron list
   inari cron remove NAME
 
@@ -91,11 +93,15 @@ func cronAdd(dir cron.Dir, loc *time.Location, args []string, stdin io.Reader, s
 	in := fs.Duration("in", 0, "")
 	cwd := fs.String("cwd", "", "")
 	replace := fs.Bool("replace", false, "")
+	reminder := fs.Bool("reminder", false, "")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w; run inari cron --help", err)
 	}
 	now := time.Now().In(loc)
 	j := cron.Job{Name: *name, Schedule: *schedule, CWD: *cwd, Created: now}
+	if *reminder {
+		j.Kind = cron.KindReminder
+	}
 
 	set := 0
 	for _, given := range []bool{*schedule != "", *atText != "", *in != 0} {
@@ -149,7 +155,7 @@ func cronAdd(dir cron.Dir, loc *time.Location, args []string, stdin io.Reader, s
 	if err := dir.Add(j, *replace); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "added %s: next run %s\n", j.Name, nextRun(j, now))
+	fmt.Fprintf(stdout, "added %s %s: next run %s\n", kind(j), j.Name, nextRun(j, now))
 	return nil
 }
 
@@ -161,10 +167,15 @@ func cronList(dir cron.Dir, loc *time.Location, stdout io.Writer) error {
 	}
 	now := time.Now().In(loc)
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSCHEDULE\tNEXT RUN\tDIRECTORY")
+	fmt.Fprintln(w, "NAME\tKIND\tSCHEDULE\tNEXT RUN\tDIRECTORY")
 	for _, j := range jobs {
 		when, _ := j.When()
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", j.Name, when, nextRun(j, now), j.CWD)
+		dir := j.CWD
+		if j.Reminder() {
+			// A reminder runs nowhere.
+			dir = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", j.Name, kind(j), when, nextRun(j, now), dir)
 	}
 	w.Flush()
 	for _, j := range jobs {
@@ -177,6 +188,13 @@ func cronList(dir cron.Dir, loc *time.Location, stdout io.Writer) error {
 }
 
 const timeFormat = "Mon 2006-01-02 15:04 MST"
+
+func kind(j cron.Job) string {
+	if j.Reminder() {
+		return "reminder"
+	}
+	return "job"
+}
 
 func nextRun(j cron.Job, now time.Time) string {
 	when, err := j.When()

@@ -50,8 +50,13 @@ func NewRunner(h *hub.Hub, home Target, timeout time.Duration, log *slog.Logger)
 	return r
 }
 
-// Run runs j once, for the time it was due, and delivers its final message.
+// Run runs j once, for the time it was due: a task in a session of its own,
+// delivering its final message, and a reminder by delivering it.
 func (r *Runner) Run(ctx context.Context, j Job, due time.Time) {
+	if j.Reminder() {
+		r.remind(ctx, j, due)
+		return
+	}
 	key := fmt.Sprintf("%s:%s.%d", connector, j.Name, time.Now().UnixNano())
 	ru := &run{done: make(chan hub.End, 1)}
 	r.mu.Lock()
@@ -117,14 +122,31 @@ func (r *Runner) wait(ctx context.Context, key string, ru *run) string {
 	return lead + final
 }
 
-// deliver hands the report to the home conversation's agent, which relays it
-// to the people there: as steering when it is working, so the report reaches
-// it before its next step, and as a turn of its own otherwise.
+// deliver hands a task's report to the home conversation's agent.
 func (r *Runner) deliver(ctx context.Context, j Job, report string) {
-	r.hub.Notice(r.home.Conv, fmt.Sprintf("⏰ cron job %s finished", j.Name))
-	msg := hub.Message{Conv: r.home.Conv, Route: r.home.Route, Author: "cron notice: " + j.Name, Text: report}
+	r.send(ctx, j, fmt.Sprintf("⏰ cron job %s finished", j.Name), "cron notice: "+j.Name, report)
+}
+
+// remind hands a reminder to the home conversation's agent, saying so when
+// it comes late.
+func (r *Runner) remind(ctx context.Context, j Job, due time.Time) {
+	r.log.Info("reminder due", "job", j.Name, "due", due)
+	text := j.Prompt
+	if time.Since(due) > time.Minute {
+		text += fmt.Sprintf("\n\n(This reminder was due at %s and comes late, because inari was not running then.)", due.Format("Mon 2006-01-02 15:04 MST"))
+	}
+	r.send(ctx, j, "⏰ reminder "+j.Name, "reminder: "+j.Name, text)
+}
+
+// send shows notice in the home conversation and hands text to its agent
+// from author, which relays it to the people there: as steering when the
+// agent is working, so it arrives before its next step, and as a turn of its
+// own otherwise.
+func (r *Runner) send(ctx context.Context, j Job, notice, author, text string) {
+	r.hub.Notice(r.home.Conv, notice)
+	msg := hub.Message{Conv: r.home.Conv, Route: r.home.Route, Author: author, Text: text}
 	if err := r.hub.Handle(ctx, msg); err != nil {
-		r.log.Error("deliver job report", "job", j.Name, "err", err)
+		r.log.Error("deliver to home", "job", j.Name, "err", err)
 	}
 }
 
@@ -179,10 +201,16 @@ func jobInstructions(j Job, due time.Time, late bool) string {
 // and loc where schedules are read.
 func Usage(exe string, loc *time.Location) string {
 	cmd := shellQuote(exe) + " cron"
-	return fmt.Sprintf(`You can schedule jobs with `+"`%[1]s`"+`. A job runs its prompt in a new, empty kon session, in the directory you add it from, at the times its schedule names. When a run finishes, its final message comes back to the home channel as a message starting with "[cron notice: NAME]": a report from your own job, not a message from a person, which you relay to the channel. Write a job's prompt so it stands on its own, since its session starts empty. Times are in %[2]s. Run `+"`%[1]s --help`"+` for usage. For example:
+	return fmt.Sprintf(`You can schedule jobs and reminders with `+"`%[1]s`"+`, at the times a schedule names:
+
+- A job runs its prompt in a new, empty kon session, in the directory you add it from. When a run finishes, its final message comes back to the home channel as a message starting with "[cron notice: NAME]". Write a job's prompt so it stands on its own, since its session starts empty.
+- A reminder (add --reminder) runs nothing: at its time, its text comes back to the home channel as a message starting with "[reminder: NAME]". Write it as a note to yourself: what to remind whom of, and why.
+
+Messages starting with "[cron notice: NAME]" or "[reminder: NAME]" are from your own schedule, not from a person; act on them and tell the channel what matters. Times are in %[2]s. Run `+"`%[1]s --help`"+` for usage. For example:
 
 %[1]s add --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits in this repository."
-%[1]s add --name deploy-check --in 2h "Check whether the deploy to production finished, and report its status."
+%[1]s add --reminder --name deploy --in 2h "Remind Alice to check whether the deploy finished."
+%[1]s add --reminder --name review --at "2026-10-05 14:00" "Bob asked to be reminded to review the release notes."
 %[1]s list
 %[1]s remove standup`, cmd, loc)
 }

@@ -36,7 +36,7 @@ func TestCronAddListRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(out, "added standup: next run ") || !strings.Contains(out, "09:00 UTC") {
+	if !strings.HasPrefix(out, "added job standup: next run ") || !strings.Contains(out, "09:00 UTC") {
 		t.Fatalf("add said %q", out)
 	}
 	if _, err := os.Stat(filepath.Join(state, "cron", "standup.json")); err != nil {
@@ -113,5 +113,24 @@ func TestParseAt(t *testing.T) {
 		if err != nil || !got.Equal(want) {
 			t.Errorf("parseAt(%q) = %v, %v; want %v", in, got, err, want)
 		}
+	}
+}
+
+func TestCronAddReminder(t *testing.T) {
+	state := cronEnv(t, `{"home": "discord:1"}`)
+	out, err := cronCmd(t, "", "add", "--reminder", "--name", "deploy", "--in", "2h", "Remind Alice about the deploy.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "added reminder deploy: next run ") {
+		t.Fatalf("add said %q", out)
+	}
+	data, _ := os.ReadFile(filepath.Join(state, "cron", "deploy.json"))
+	if !strings.Contains(string(data), `"kind": "reminder"`) {
+		t.Fatalf("job file:\n%s", data)
+	}
+	out, _ = cronCmd(t, "", "list")
+	if !strings.Contains(out, "reminder") || !strings.Contains(out, "deploy: Remind Alice about the deploy.") {
+		t.Fatalf("list:\n%s", out)
 	}
 }

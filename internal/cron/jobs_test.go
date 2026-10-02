@@ -74,6 +74,7 @@ func TestDirAddValidates(t *testing.T) {
 		"both":         both,
 		"no prompt":    {Name: "x", Schedule: "@daily", CWD: t.TempDir()},
 		"relative cwd": {Name: "x", Schedule: "@daily", Prompt: "p", CWD: "work"},
+		"unknown kind": {Name: "x", Kind: "alarm", Schedule: "@daily", Prompt: "p", CWD: t.TempDir()},
 	} {
 		if err := d.Add(j, false); err == nil {
 			t.Errorf("%s: added", name)

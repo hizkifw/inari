@@ -104,3 +104,27 @@ func TestRunStopsAJobThatRunsTooLong(t *testing.T) {
 	rec.expect(t, `notice`,
 		`post test:home "echo: [cron notice: stuck] The job was stopped after running for 100ms. Its last message:\n\nLooking"`)
 }
+
+func TestReminderGoesStraightToHome(t *testing.T) {
+	r, rec, _ := newRunner(t, time.Minute)
+	j := job(t, "deploy", "")
+	j.Kind, j.At, j.Prompt = KindReminder, time.Now(), "Remind Alice about the deploy."
+	r.Run(context.Background(), j, time.Now())
+	rec.expect(t,
+		`notice test:home "⏰ reminder deploy"`,
+		`post test:home "echo: [reminder: deploy] Remind Alice about the deploy."`)
+	// Nothing ran: no session was opened for the reminder.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.runs) != 0 {
+		t.Fatalf("runs = %v", r.runs)
+	}
+}
+
+func TestLateReminderSaysSo(t *testing.T) {
+	r, rec, _ := newRunner(t, time.Minute)
+	j := job(t, "late", "")
+	j.Kind, j.Prompt = KindReminder, "Stretch."
+	r.Run(context.Background(), j, time.Now().Add(-time.Hour))
+	rec.expect(t, `notice`, `post test:home "echo: [reminder: late] Stretch.\n\n(This reminder was due at`)
+}
