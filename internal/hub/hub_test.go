@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -194,5 +196,51 @@ func TestNewSessionsAreToldTheyAreInAChat(t *testing.T) {
 	got := <-rec.events
 	if !strings.Contains(got, "[alice]") || !strings.HasSuffix(got, `Discord renders Markdown."`) {
 		t.Fatalf("session was told %s", got)
+	}
+}
+
+func TestAttachmentsAreSavedAndListed(t *testing.T) {
+	h, rec, _ := newHub(t)
+	files := []Attachment{
+		{Name: "../notes.zip", MIME: "application/zip", Data: []byte("PK")},
+		{Name: "notes.zip", Data: []byte("again")},
+	}
+	if err := h.Handle(context.Background(), Message{Conv: "test:1", Route: Route{CWD: t.TempDir()}, Author: "alice", Attachments: files}); err != nil {
+		t.Fatal(err)
+	}
+	rec.expect(t, "start")
+	got := <-rec.events
+	paths := regexp.MustCompile(`- (\S+) \(([^)]*)\)`).FindAllStringSubmatch(got, -1)
+	if !strings.Contains(got, "[alice] sent 2 attachment(s).") || len(paths) != 2 {
+		t.Fatalf("kon was sent %s", got)
+	}
+	want := []struct{ base, about, data string }{
+		{"notes.zip", "application/zip, 2 bytes", "PK"},
+		{"2-notes.zip", "5 bytes", "again"},
+	}
+	for i, w := range want {
+		p := paths[i][1]
+		if filepath.Base(p) != w.base || paths[i][2] != w.about {
+			t.Fatalf("attachment %d listed as %s (%s)", i, p, paths[i][2])
+		}
+		if data, err := os.ReadFile(p); err != nil || string(data) != w.data {
+			t.Fatalf("%s holds %q, %v", p, data, err)
+		}
+	}
+	rec.expect(t, "end end_turn")
+	status, _ := h.Status("test:1")
+	session := filepath.Dir(filepath.Dir(paths[0][1]))
+	if filepath.Base(session) != status.SessionID {
+		t.Fatalf("attachments saved in %s, not under session %s", session, status.SessionID)
+	}
+	if err := h.Reset(context.Background(), "test:1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(session); !os.IsNotExist(err) {
+		t.Fatalf("attachments outlived /new: %v", err)
+	}
+	h.Close()
+	if _, err := os.Stat(filepath.Dir(session)); !os.IsNotExist(err) {
+		t.Fatalf("attachment directory outlived Close: %v", err)
 	}
 }

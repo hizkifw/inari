@@ -15,8 +15,11 @@ run anything kon can, as the user inari runs as. Trust accordingly.
 - **One session per channel.** Everyone in a channel shares its transcript.
   Each message reaches kon as `[name] text`, so the model knows who said what.
 - **Steering.** A message sent while kon works is added to the running turn,
-  as Enter does in kon's own UI. A message with attachments waits for its own
-  turn instead.
+  as Enter does in kon's own UI.
+- **Attachments as files.** Each attachment is saved to a temporary
+  directory per session and listed in the message by path, so kon reads it
+  with its tools as it would any file. `/new` removes the session's files,
+  and inari removes them all when it stops.
 - **A message per thing kon says.** Text is not streamed token by token:
   each stretch of it is posted once complete, as its own message. The tool
   calls kon makes after it are edited into that message as small lines

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -152,11 +153,14 @@ type Hub struct {
 
 	mu sync.Mutex
 	// extra is what SetInstructions adds.
-	extra   string
-	outs    map[string]Output
-	client  *acp.Client
-	convs   map[string]*conv
-	session map[string]*conv
+	extra string
+	// attachments is the temporary directory attachments are saved under,
+	// or "" until the first is.
+	attachments string
+	outs        map[string]Output
+	client      *acp.Client
+	convs       map[string]*conv
+	session     map[string]*conv
 	// starting serializes starting kon, so concurrent first messages share
 	// one process.
 	starting sync.Mutex
@@ -207,20 +211,27 @@ func (h *Hub) Register(connector string, out Output) {
 	h.outs[connector] = out
 }
 
-// Close stops kon, which cancels every turn and closes every session.
+// Close stops kon, which cancels every turn and closes every session, and
+// removes the saved attachments.
 func (h *Hub) Close() {
 	h.mu.Lock()
-	c := h.client
+	c, dir := h.client, h.attachments
+	h.attachments = ""
 	h.mu.Unlock()
 	if c != nil {
 		c.Close()
+	}
+	if dir != "" {
+		if err := os.RemoveAll(dir); err != nil {
+			h.log.Warn("remove attachments", "dir", dir, "err", err)
+		}
 	}
 }
 
 // Handle sends a message to its conversation's session: as steering when a
 // turn is running, so kon reads it before its next step, and otherwise as a
-// prompt. Attachments cannot steer, so a message with any waits for its own
-// turn.
+// prompt. Attachments are saved as files and listed by path, so a message
+// with any steers as well.
 func (h *Hub) Handle(ctx context.Context, m Message) error {
 	c, cl, err := h.open(ctx, m.Conv, m.Route)
 	if err != nil {
@@ -236,14 +247,19 @@ func (h *Hub) Handle(ctx context.Context, m Message) error {
 	h.mu.Lock()
 	busy, id := c.turns > 0, c.sessionID
 	h.mu.Unlock()
-	if busy && len(m.Attachments) == 0 {
+	files, err := h.attach(id, m.Attachments)
+	if err != nil {
+		return err
+	}
+	text += files
+	if busy {
 		err := cl.Steer(ctx, id, text)
 		// The turn may have ended since; then the message starts the next.
 		if !acp.IsCode(err, acp.CodeInvalidRequest) {
 			return err
 		}
 	}
-	h.prompt(c, cl, append([]acp.ContentBlock{acp.TextBlock(text)}, blocks(m.Attachments)...))
+	h.prompt(c, cl, []acp.ContentBlock{acp.TextBlock(text)})
 	return nil
 }
 
@@ -360,9 +376,16 @@ func (h *Hub) Cancel(conv string) error {
 }
 
 // Reset closes the conversation's session and forgets it, so the next
-// message starts a fresh one.
+// message starts a fresh one, and removes the attachments sent to it.
 func (h *Hub) Reset(ctx context.Context, conv string) error {
 	c, cl, id := h.live(conv)
+	if c == nil {
+		// kon is not running, but the session it would resume may still
+		// have attachments.
+		b, _ := h.store.Get(conv)
+		id = b.SessionID
+	}
+	defer h.dropAttachments(id)
 	if c != nil {
 		c.open.Lock()
 		defer c.open.Unlock()
@@ -510,12 +533,20 @@ func (h *Hub) open(ctx context.Context, key string, route Route) (*conv, *acp.Cl
 		}
 	}
 	h.mu.Lock()
+	old := c.sessionID
 	delete(h.session, c.sessionID)
 	// A detached session counts as saved so that it never is.
 	c.sessionID, c.cwd, c.client, c.options, c.saved, c.detached = s.SessionID, cwd, cl, s.ConfigOptions, resumed || route.Detached, route.Detached
 	h.session[s.SessionID] = c
 	h.mu.Unlock()
 	h.log.Info("session open", "conv", key, "session", s.SessionID, "cwd", cwd)
+	// A session this one replaces is never resumed, so nothing reads its
+	// attachments again.
+	for _, id := range []string{old, b.SessionID} {
+		if id != s.SessionID {
+			h.dropAttachments(id)
+		}
+	}
 	return c, cl, nil
 }
 
