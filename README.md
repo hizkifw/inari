@@ -27,8 +27,9 @@ run anything kon can, as the user inari runs as. Trust accordingly.
   `✓ read main.go`), at most one edit per 1.5 seconds on Discord and 2 on
   Telegram. The typing indicator shows while kon works.
 - **Streaming in Telegram private chats.** There, kon's text streams in
-  token by token as a Telegram draft while it is written, with a stop
-  button that cancels the turn, and becomes a message once complete.
+  token by token as a Telegram draft while it is written, and becomes a
+  message once complete. `stop_button` adds a button to drafts that
+  cancels the turn.
   Telegram offers drafts only in private chats, so groups get whole
   messages.
 - **Background jobs.** When a job kon started finishes after its turn, kon
@@ -147,6 +148,7 @@ other running inari keeps the old version until it restarts.
     "telegram": {
       "token": "…",
       "api_url": "",
+      "stop_button": false,
       "access": {"users": ["…"], "channels": ["…"]},
       "channels": {"…": {"cwd": "/abs/path", "instructions": "…"}},
       "default_cwd": "/abs/path",
@@ -163,6 +165,7 @@ other running inari keeps the old version until it restarts.
 | `token` | The bot token. |
 | `guilds` | Discord only: servers to register slash commands in, where they appear at once. Empty registers them globally, which can take a while to show and also works in DMs. |
 | `api_url` | Telegram only: a [local Bot API server](https://github.com/tdlib/telegram-bot-api) to use instead of Telegram's. |
+| `stop_button` | Telegram only: put a button on streamed drafts that cancels the turn. Off by default, since Telegram animates it in with every new draft; `/cancel` works either way. |
 | `access.users` | User IDs trusted in any channel inari serves. |
 | `access.channels` | Channel IDs where everyone is trusted. |
 | `channels.<id>.cwd` | That channel's working directory. |

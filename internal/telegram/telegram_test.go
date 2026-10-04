@@ -76,6 +76,11 @@ func (f *fakeTelegram) await(t *testing.T, method, want string) string {
 }
 
 func start(t *testing.T) *fakeTelegram {
+	return startWith(t, func(*config.Telegram) {})
+}
+
+// startWith runs a connector whose config change has made.
+func startWith(t *testing.T, change func(*config.Telegram)) *fakeTelegram {
 	t.Helper()
 	f := &fakeTelegram{updates: make(chan update, 8), requests: make(chan string, 256)}
 	srv := httptest.NewServer(f)
@@ -89,6 +94,7 @@ func start(t *testing.T) *fakeTelegram {
 	t.Cleanup(h.Close)
 	cfg := &config.Telegram{Token: "T", APIURL: srv.URL, Access: config.Access{Users: []string{"42"}},
 		Routes: config.Routes{DefaultCWD: t.TempDir()}}
+	change(cfg)
 	c := New(cfg, h, log)
 	h.Register(connector, c)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,7 +129,7 @@ func TestDraftsShowInPrivateChats(t *testing.T) {
 	f.updates <- private("pause")
 	// kon stops mid-sentence, so what it has written so far is a draft.
 	got := f.await(t, "sendRichMessageDraft", `"draft_id":1,"rich_message":{"markdown":"Writing"}`)
-	if !strings.Contains(got, `"can_stop":true`) || !strings.Contains(got, `"chat_id":42`) {
+	if strings.Contains(got, "can_stop") || !strings.Contains(got, `"chat_id":42`) {
 		t.Fatalf("draft = %s", got)
 	}
 	f.updates <- private("go on")
@@ -131,9 +137,9 @@ func TestDraftsShowInPrivateChats(t *testing.T) {
 }
 
 func TestStopButtonCancelsTheTurn(t *testing.T) {
-	f := start(t)
+	f := startWith(t, func(c *config.Telegram) { c.StopButton = true })
 	f.updates <- private("pause")
-	f.await(t, "sendRichMessageDraft", `"markdown":"Writing"`)
+	f.await(t, "sendRichMessageDraft", `"can_stop":true`)
 	f.updates <- update{Stopped: &generationStopped{Chat: chat{ID: 42, Type: "private"}, DraftID: 1}}
 	// What kon wrote before it stopped is kept as a message.
 	f.await(t, "sendRichMessage ", `"markdown":"Writing"`)

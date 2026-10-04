@@ -87,7 +87,11 @@ type Telegram struct {
 	// APIURL is the Bot API server, for a local one. It defaults to
 	// https://api.telegram.org.
 	APIURL string `json:"api_url"`
-	Access Access `json:"access"`
+	// StopButton puts a button on drafts that cancels the turn. Telegram
+	// animates it in with each new draft, which is distracting, so it is
+	// off unless asked for; /cancel works either way.
+	StopButton bool   `json:"stop_button"`
+	Access     Access `json:"access"`
 	Routes
 }
 

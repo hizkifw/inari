@@ -4,7 +4,7 @@
 //
 // Replies are rich messages, which take the model's Markdown as it is. In
 // private chats kon's text streams in as a draft while it is written, and
-// the draft's stop button cancels the turn.
+// the draft can carry a stop button that cancels the turn.
 package telegram
 
 import (
@@ -524,13 +524,15 @@ func (m chatMessenger) editMarkup(id int64, p part, markup *inlineKeyboard) {
 	}
 }
 
-// draft streams p as draft id, with a button that stops the turn. A draft
-// is best effort: one that fails is replaced by the next, or by the message.
+// draft streams p as draft id, with a button that stops the turn when the
+// config asks for one. A draft is best effort: one that fails is replaced by the next, or by the message.
 func (m chatMessenger) draft(id int, p part) time.Duration {
 	params := m.t.params()
 	params["draft_id"] = id
 	params["rich_message"] = richMessage{Markdown: p.rich}
-	params["can_stop"] = true
+	if m.c.cfg.StopButton {
+		params["can_stop"] = true
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	err := m.c.api.once(ctx, "sendRichMessageDraft", params, nil)
