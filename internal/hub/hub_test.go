@@ -199,7 +199,7 @@ func TestNewSessionsAreToldTheyAreInAChat(t *testing.T) {
 	}
 	rec.expect(t, "start")
 	got := <-rec.events
-	if !strings.Contains(got, "[alice]") || !strings.HasSuffix(got, `Discord renders Markdown."`) {
+	if !strings.Contains(got, "[alice]") || !strings.Contains(got, "This conversation's ID is test:1.") || !strings.HasSuffix(got, `Discord renders Markdown."`) {
 		t.Fatalf("session was told %s", got)
 	}
 }

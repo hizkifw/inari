@@ -18,11 +18,11 @@ import (
 const cronUsage = `usage: inari cron <command>
 
 Schedule a job: a prompt that runs in a new, empty kon session, whose final
-message is delivered to the home channel's agent as a notice. With
---reminder, schedule a reminder instead: at its time, PROMPT itself is
-delivered to the home channel's agent, and nothing runs.
+message is delivered to a chat's agent as a notice. With --reminder,
+schedule a reminder instead: at its time, PROMPT itself is delivered to the
+chat's agent, and nothing runs.
 
-  inari cron add [--reminder] --name NAME (--schedule SPEC | --at TIME | --in DURATION) [--cwd DIR] [--replace] PROMPT
+  inari cron add [--reminder] --name NAME (--schedule SPEC | --at TIME | --in DURATION) [--to CONV] [--cwd DIR] [--replace] PROMPT
   inari cron list
   inari cron remove NAME
 
@@ -30,6 +30,8 @@ SPEC is a cron expression ("0 9 * * 1-5": minute hour day-of-month month
 day-of-week), @hourly, @daily, @weekly, @monthly, or "@every 30m".
 TIME is "2006-01-02 15:04", "15:04" (the next one), or RFC 3339.
 DURATION is a Go duration such as 90m or 2h30m.
+CONV is the conversation to deliver to, such as "telegram:123"; without it,
+the job reports to the home channel.
 PROMPT is the rest of the arguments, or "-" to read it from stdin.
 The job's session works in DIR, by default the current directory.`
 
@@ -94,11 +96,12 @@ func cronAdd(dir cron.Dir, loc *time.Location, args []string, stdin io.Reader, s
 	cwd := fs.String("cwd", "", "")
 	replace := fs.Bool("replace", false, "")
 	reminder := fs.Bool("reminder", false, "")
+	to := fs.String("to", "", "")
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("%w; run inari cron --help", err)
 	}
 	now := time.Now().In(loc)
-	j := cron.Job{Name: *name, Schedule: *schedule, CWD: *cwd, Created: now}
+	j := cron.Job{Name: *name, Schedule: *schedule, CWD: *cwd, To: *to, Created: now}
 	if *reminder {
 		j.Kind = cron.KindReminder
 	}
@@ -167,7 +170,7 @@ func cronList(dir cron.Dir, loc *time.Location, stdout io.Writer) error {
 	}
 	now := time.Now().In(loc)
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tKIND\tSCHEDULE\tNEXT RUN\tDIRECTORY")
+	fmt.Fprintln(w, "NAME\tKIND\tSCHEDULE\tNEXT RUN\tTO\tDIRECTORY")
 	for _, j := range jobs {
 		when, _ := j.When()
 		dir := j.CWD
@@ -175,7 +178,11 @@ func cronList(dir cron.Dir, loc *time.Location, stdout io.Writer) error {
 			// A reminder runs nowhere.
 			dir = "-"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", j.Name, kind(j), when, nextRun(j, now), dir)
+		to := j.To
+		if to == "" {
+			to = "home"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", j.Name, kind(j), when, nextRun(j, now), to, dir)
 	}
 	w.Flush()
 	for _, j := range jobs {

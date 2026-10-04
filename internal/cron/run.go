@@ -27,8 +27,11 @@ type Target struct {
 // its own, and its final message is delivered to the home conversation as a
 // notice. It is the hub's Output for those conversations.
 type Runner struct {
-	hub     *hub.Hub
-	home    Target
+	hub  *hub.Hub
+	home Target
+	// route is a conversation's route, or false when inari does not serve
+	// it. It may be nil, and then every job reports home.
+	route   func(conv string) (hub.Route, bool)
 	timeout time.Duration
 	log     *slog.Logger
 
@@ -44,10 +47,11 @@ type run struct {
 	done  chan hub.End
 }
 
-// NewRunner returns a runner delivering to home that stops a run after
-// timeout. Register it with the hub as the "cron" connector.
-func NewRunner(h *hub.Hub, home Target, timeout time.Duration, log *slog.Logger) *Runner {
-	r := &Runner{hub: h, home: home, timeout: timeout, log: log.With("component", "cron"), runs: map[string]*run{}}
+// NewRunner returns a runner delivering to each job's conversation, or to
+// home, that stops a run after timeout. route resolves a job's
+// conversation. It registers itself with the hub as the "cron" connector.
+func NewRunner(h *hub.Hub, home Target, route func(conv string) (hub.Route, bool), timeout time.Duration, log *slog.Logger) *Runner {
+	r := &Runner{hub: h, home: home, route: route, timeout: timeout, log: log.With("component", "cron"), runs: map[string]*run{}}
 	h.Register(connector, r)
 	return r
 }
@@ -141,16 +145,34 @@ func (r *Runner) remind(ctx context.Context, j Job, due time.Time) {
 	r.send(ctx, j, "⏰ reminder "+j.Name, "reminder: "+j.Name, text)
 }
 
-// send shows notice in the home conversation and hands text to its agent
+// send shows notice in the job's conversation and hands text to its agent
 // from author, which relays it to the people there: as steering when the
 // agent is working, so it arrives before its next step, and as a turn of its
 // own otherwise.
 func (r *Runner) send(ctx context.Context, j Job, notice, author, text string) {
-	r.hub.Notice(r.home.Conv, notice)
-	msg := hub.Message{Conv: r.home.Conv, Route: r.home.Route, Author: author, Text: text}
-	if err := r.hub.Handle(ctx, msg); err != nil {
-		r.log.Error("deliver to home", "job", j.Name, "err", err)
+	to := r.target(j)
+	if to.Conv != j.To && j.To != "" {
+		text += fmt.Sprintf("\n\n(This was meant for the conversation %s, which inari no longer serves, so it came here instead.)", j.To)
 	}
+	r.hub.Notice(to.Conv, notice)
+	msg := hub.Message{Conv: to.Conv, Route: to.Route, Author: author, Text: text}
+	if err := r.hub.Handle(ctx, msg); err != nil {
+		r.log.Error("deliver", "job", j.Name, "conv", to.Conv, "err", err)
+	}
+}
+
+// target is where j reports: its own conversation while inari serves it,
+// and home otherwise, so nothing it reports is lost.
+func (r *Runner) target(j Job) Target {
+	if j.To == "" || j.To == r.home.Conv || r.route == nil {
+		return r.home
+	}
+	route, ok := r.route(j.To)
+	if !ok {
+		r.log.Warn("job's conversation is not served; delivering home", "job", j.Name, "conv", j.To)
+		return r.home
+	}
+	return Target{Conv: j.To, Route: route}
 }
 
 // TurnStarted is part of hub.Output.
@@ -192,7 +214,7 @@ func jobInstructions(j Job, due time.Time, late bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are running the scheduled job %q (schedule: %s) for inari, due at %s. ", j.Name, when, due.Format("Mon 2006-01-02 15:04 MST"))
 	b.WriteString("No one reads this session while it runs, and no one can answer questions. ")
-	b.WriteString("When you finish, your final message is delivered as a notice to the agent of the team's home chat, which relays it to the people there. ")
+	b.WriteString("When you finish, your final message is delivered as a notice to the agent of the chat that scheduled the job, which relays it to the people there. ")
 	b.WriteString("Make that final message a short, self-contained report of what you found or did.")
 	if late {
 		b.WriteString(" This run starts late, because inari was not running when it was due.")

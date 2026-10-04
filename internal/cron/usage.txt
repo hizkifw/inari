@@ -1,22 +1,26 @@
 You can schedule jobs and reminders with `{{.Cmd}}`:
 
 - A job runs its prompt in a new, empty kon session, in the directory you add it
-  from. When a run finishes, its final message comes back to the home channel as
-  a message starting with "[cron notice: NAME]". Write a job's prompt so it has
+  from. When a run finishes, its final message comes back to the chat as a
+  message starting with "[cron notice: NAME]". Write a job's prompt so it has
   all the information it needs to complete the task, since its session starts
   empty.
-- A reminder (add --reminder) runs nothing: at the specified time time, its text
-  comes back to the home channel as a message starting with "[reminder: NAME]".
-  Write it as a note to yourself: what to remind whom of, and why.
+- A reminder (add --reminder) runs nothing: at the specified time, its text
+  comes back to the chat as a message starting with "[reminder: NAME]". Write
+  it as a note to yourself: what to remind whom of, and why.
 - A job or reminder added with --at or --in happens once and is then removed;
   one added with --schedule repeats until removed.
+- Pass --to with this conversation's ID, given above, so it comes back to this
+  chat, unless you are asked to send it elsewhere. Without --to it goes to the
+  home channel.
 
 Messages starting with "[cron notice: NAME]" or "[reminder: NAME]" are from your
 own schedule, not from a person; act on them and tell the channel what matters.
-Times are in {{.Location}}. Run `{{.Cmd}} --help` for usage. For example:
+Times are in {{.Location}}. Run `{{.Cmd}} --help` for usage. For example, from
+the conversation telegram:123:
 
-{{.Cmd}} add --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits in /home/user/workspace/my-project."
-{{.Cmd}} add --reminder --name deploy --in 2h "Remind Alice to check whether the deploy finished."
-{{.Cmd}} add --reminder --name review --at "2026-10-05 14:00" "Bob asked to be reminded to review the release notes."
+{{.Cmd}} add --to telegram:123 --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits in /home/user/workspace/my-project."
+{{.Cmd}} add --to telegram:123 --reminder --name deploy --in 2h "Remind Alice to check whether the deploy finished."
+{{.Cmd}} add --to telegram:123 --reminder --name review --at "2026-10-05 14:00" "Bob asked to be reminded to review the release notes."
 {{.Cmd}} list
 {{.Cmd}} remove standup

@@ -56,12 +56,15 @@ type Route struct {
 //go:embed instructions.txt
 var chatInstructions string
 
-// instructions are what a new session of r is told.
-func (h *Hub) instructions(r Route) string {
+// instructions are what a new session of conv, with route r, is told. A
+// chat session is told its conversation's ID, which `inari cron add --to`
+// takes so that what it schedules comes back to the same chat.
+func (h *Hub) instructions(conv string, r Route) string {
 	if r.Detached {
 		return r.Instructions
 	}
-	return strings.TrimSpace(strings.TrimSpace(chatInstructions) + "\n\n" + h.extra + "\n\n" + r.Instructions)
+	id := fmt.Sprintf("This conversation's ID is %s.", conv)
+	return strings.TrimSpace(strings.TrimSpace(chatInstructions) + " " + id + "\n\n" + h.extra + "\n\n" + r.Instructions)
 }
 
 // SetInstructions adds to what every chat session is told, after the hub's
@@ -623,7 +626,7 @@ func (h *Hub) open(ctx context.Context, key string, route Route) (*conv, *acp.Cl
 		}
 	}
 	if s.SessionID == "" {
-		s, err = cl.NewSession(ctx, cwd, h.instructions(route))
+		s, err = cl.NewSession(ctx, cwd, h.instructions(key, route))
 		if err != nil {
 			return nil, nil, fmt.Errorf("start a kon session: %w", err)
 		}

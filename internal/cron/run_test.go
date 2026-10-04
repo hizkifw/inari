@@ -59,7 +59,7 @@ func newRunner(t *testing.T, timeout time.Duration) (*Runner, *home, string) {
 	t.Cleanup(h.Close)
 	rec := &home{events: make(chan string, 16)}
 	h.Register("test", rec)
-	r := NewRunner(h, Target{Conv: "test:home", Route: hub.Route{CWD: t.TempDir()}}, timeout, log)
+	r := NewRunner(h, Target{Conv: "test:home", Route: hub.Route{CWD: t.TempDir()}}, nil, timeout, log)
 	return r, rec, sessions
 }
 
@@ -166,5 +166,23 @@ func TestUsageNamesTheCommandAndTimezone(t *testing.T) {
 	}
 	if strings.Contains(got, "{{") || strings.HasSuffix(got, "\n") {
 		t.Fatalf("usage is not filled in or trimmed:\n%s", got)
+	}
+}
+
+func TestReminderGoesToTheChatItWasAskedIn(t *testing.T) {
+	r, rec, _ := newRunner(t, time.Minute)
+	cwd := t.TempDir()
+	r.route = func(conv string) (hub.Route, bool) { return hub.Route{CWD: cwd}, conv == "test:dm" }
+	j := job(t, "nudge", "")
+	j.Kind, j.At, j.Prompt, j.To = KindReminder, time.Now(), "Remind Bob.", "test:dm"
+	r.Run(context.Background(), j, time.Now())
+	rec.expect(t, `notice test:dm "⏰ reminder nudge"`, `post test:dm "echo: [reminder: nudge] Remind Bob.`)
+
+	// A chat inari no longer serves gets nothing; home gets it, and says why.
+	j.To = "test:gone"
+	r.Run(context.Background(), j, time.Now())
+	rec.expect(t, `notice test:home "⏰ reminder nudge"`)
+	if got := <-rec.events; !strings.HasPrefix(got, `post test:home`) || !strings.Contains(got, "meant for the conversation test:gone") {
+		t.Fatalf("got %s", got)
 	}
 }

@@ -37,8 +37,8 @@ run anything kon can, as the user inari runs as. Trust accordingly.
 - **Background jobs.** When a job kon started finishes after its turn, kon
   takes a turn of its own and the result is posted to the channel.
 - **Cron jobs and reminders.** kon schedules its own with `inari cron`. A
-  job runs in a fresh session and reports back to a home channel; a
-  reminder just comes back there. See [Cron jobs](#cron-jobs).
+  job runs in a fresh session and reports back to the chat it was asked
+  for in; a reminder just comes back there. See [Cron jobs](#cron-jobs).
 - **Sessions survive restarts.** inari remembers each channel's session in
   `$XDG_STATE_HOME/inari/sessions.json` and resumes it.
 
@@ -197,6 +197,9 @@ in its directory:
    messages split, and that people see tool calls but not their output;
 3. the connector's `instructions`, then the channel's.
 
+It is also told its conversation's ID, for scheduling jobs that come back
+to it.
+
 kon fixes a session's system prompt when it starts, so changed instructions
 apply after `/new`. A resumed session keeps the ones it started with.
 
@@ -211,7 +214,9 @@ a coding agent in a terminal, while keeping everything above.
 
 ## Cron jobs
 
-Name a home channel to turn cron on:
+Name a home channel to turn cron on. Jobs and reminders report to the chat
+they were asked for in, and to home when they have no chat or theirs is no
+longer served:
 
 ```json
 "cron": {"home": "discord:<channel id>", "timezone": "Asia/Singapore", "timeout": "1h"}
@@ -219,7 +224,7 @@ Name a home channel to turn cron on:
 
 | Key | Meaning |
 | --- | --- |
-| `cron.home` | The channel a job's report goes to, as `discord:<channel id>` or `telegram:<chat id>`. It must be a channel inari serves. |
+| `cron.home` | The channel a job reports to when it names no chat of its own, as `discord:<channel id>` or `telegram:<chat id>`. It must be a channel inari serves. |
 | `cron.timezone` | Where schedules are read, as an IANA name. Defaults to the machine's. |
 | `cron.timeout` | How long a run may take before it is stopped. Defaults to `1h`. |
 
@@ -228,16 +233,20 @@ you can just ask: "remind me to check the deploy in two hours", or "every
 weekday at 9, summarize yesterday's commits". kon runs `inari cron` itself:
 
 ```sh
-inari cron add --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits."
-inari cron add --reminder --name deploy --in 2h "Remind Alice to check the deploy."
+inari cron add --to discord:123 --name standup --schedule "0 9 * * 1-5" "Summarize yesterday's commits."
+inari cron add --to telegram:456 --reminder --name deploy --in 2h "Remind Alice to check the deploy."
 inari cron list
 inari cron remove standup
 ```
 
+Each session is told its conversation's ID, such as `telegram:456`, and
+passes it as `--to`. A session started before inari told sessions this does
+not know it, so its jobs go home until `/new`.
+
 - **A job** runs its prompt in a new session and reports back, for work:
   checking a build, summarizing a day.
 - **A reminder** (`--reminder`) runs nothing: at its time its text goes
-  straight to the home channel's agent, for nudges: "tell Alice the freeze
+  straight to the chat's agent, for nudges: "tell Alice the freeze
   starts in 10 minutes".
 
 A schedule is a cron expression, `@hourly`/`@daily`/`@weekly`/`@monthly`,
@@ -245,8 +254,8 @@ A schedule is a cron expression, `@hourly`/`@daily`/`@weekly`/`@monthly`,
 directory it was added from.
 
 At each due time a job's prompt runs in a new, empty kon session, from the
-author `[cron:NAME]`. When it finishes, its final message is sent to the home
-channel's session as `[cron notice: NAME] …`. A reminder is sent there as
+author `[cron:NAME]`. When it finishes, its final message is sent to its
+chat's session as `[cron notice: NAME] …`. A reminder is sent there as
 `[reminder: NAME] …` at once. Either steers a turn that is running or starts
 one, and the agent there relays it to the channel. A small `⏰` line shows in
 the channel as each arrives.

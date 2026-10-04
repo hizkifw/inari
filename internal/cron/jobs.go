@@ -26,7 +26,10 @@ type Job struct {
 	Prompt string `json:"prompt"`
 	// CWD is where the job's session works: where kon was when it added
 	// the job.
-	CWD     string    `json:"cwd"`
+	CWD string `json:"cwd"`
+	// To is the conversation the job reports to, as "<connector>:<id>":
+	// the chat it was asked for in. Empty, it reports to the home channel.
+	To      string    `json:"to,omitempty"`
 	Created time.Time `json:"created"`
 }
 
@@ -47,7 +50,7 @@ func (j Job) Reminder() bool { return j.Kind == KindReminder }
 // carry a fresh location each read, so Job values do not compare equal even
 // when nothing changed.
 func (j Job) key() string {
-	return fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s", j.Name, j.Kind, j.Schedule, j.At.UnixNano(), j.Prompt, j.CWD)
+	return fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%s", j.Name, j.Kind, j.Schedule, j.At.UnixNano(), j.Prompt, j.CWD, j.To)
 }
 
 // When is the job's schedule.
@@ -80,6 +83,9 @@ func (j Job) validate() error {
 	}
 	if j.Schedule != "" && !j.At.IsZero() {
 		return errors.New("a job has a schedule or a time, not both")
+	}
+	if connector, id, _ := strings.Cut(j.To, ":"); j.To != "" && (connector == "" || id == "") {
+		return fmt.Errorf("--to %q is not a conversation ID such as \"telegram:123\"", j.To)
 	}
 	_, err := j.When()
 	return err

@@ -135,6 +135,19 @@ func run() error {
 	return errors.Join(all...)
 }
 
+// resolver resolves a whole conversation ID, such as "telegram:123", by its
+// connector's routes.
+func resolver(routes map[string]func(channel string) (hub.Route, bool)) func(conv string) (hub.Route, bool) {
+	return func(conv string) (hub.Route, bool) {
+		connector, channel, _ := strings.Cut(conv, ":")
+		f, ok := routes[connector]
+		if !ok || channel == "" {
+			return hub.Route{}, false
+		}
+		return f(channel)
+	}
+}
+
 // startCron runs the jobs kon schedules, when the config names a home, and
 // tells chat sessions how to schedule them.
 func startCron(ctx context.Context, cfg *config.Config, h *hub.Hub, routes map[string]func(string) (hub.Route, bool), log *slog.Logger) error {
@@ -155,7 +168,7 @@ func startCron(ctx context.Context, cfg *config.Config, h *hub.Hub, routes map[s
 		return fmt.Errorf("cron: locate inari: %w", err)
 	}
 	h.SetInstructions(cron.Usage(exe, cfg.Cron.Location))
-	runner := cron.NewRunner(h, cron.Target{Conv: cfg.Cron.Home, Route: route}, cfg.Cron.Limit, log)
+	runner := cron.NewRunner(h, cron.Target{Conv: cfg.Cron.Home, Route: route}, resolver(routes), cfg.Cron.Limit, log)
 	dir := cron.Dir(filepath.Join(cfg.StateDir, "cron"))
 	go cron.NewScheduler(dir, cfg.Cron.Location, runner.Run, log).Run(ctx)
 	log.Info("cron on", "home", cfg.Cron.Home, "jobs", string(dir), "timezone", cfg.Cron.Location)
