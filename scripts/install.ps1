@@ -6,6 +6,7 @@
 #   INARI_VERSION      release tag to install (default: latest, e.g. v0.1.0)
 #   INARI_INSTALL_DIR  where to put the binary (default: $env:LOCALAPPDATA\Programs\inari)
 #   INARI_BASE_URL     release base, for mirrors and testing
+#   GITHUB_TOKEN       raises the GitHub API rate limit, if the API is needed
 #   NO_COLOR           disable colored output
 #
 # This runs through `iex`, so it never calls `exit`: that would close the
@@ -99,10 +100,32 @@ function Get-Arch {
 
 Write-Banner
 
+# The /releases/latest redirect names the tag without API quota or a token.
+# For a few minutes after a release is published GitHub serves the generic
+# releases page instead, so fall back to the API, which takes GITHUB_TOKEN
+# for a higher rate limit, as CI's shared runners need.
+function Get-LatestVersion {
+  try {
+    $req = [System.Net.WebRequest]::Create("$baseUrl/latest")
+    $req.Method = 'HEAD'
+    $req.AllowAutoRedirect = $false
+    $req.UserAgent = 'inari-installer'
+    $resp = $req.GetResponse()
+    $location = $resp.Headers['Location']
+    $resp.Close()
+    if ($location) {
+      $tag = ($location.TrimEnd('/') -split '/')[-1]
+      if ($tag -match '^v?\d') { return $tag }
+    }
+  } catch {}
+  $headers = @{ 'User-Agent' = 'inari-installer'; 'Accept' = 'application/vnd.github+json' }
+  if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
+  $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers $headers
+  return $latest.tag_name
+}
+
 if (-not $version) {
-  $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" `
-    -Headers @{ 'User-Agent' = 'inari-installer' }
-  $version = $latest.tag_name
+  $version = Get-LatestVersion
 }
 if (-not $version.StartsWith('v')) { $version = "v$version" }
 

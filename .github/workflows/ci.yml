@@ -34,6 +34,9 @@ jobs:
       - uses: actions/checkout@v7
       - env:
           INARI_INSTALL_DIR: ${{ runner.temp }}/bin
+          # Shared runners exhaust the API's per-address limit for
+          # unauthenticated calls.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           sh scripts/install.sh
           "$INARI_INSTALL_DIR/inari" --version | grep -E '^inari v[0-9]+\.[0-9]+\.[0-9]+$'
@@ -48,6 +51,7 @@ jobs:
       - shell: powershell
         env:
           INARI_INSTALL_DIR: ${{ runner.temp }}\bin
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           Get-Content -Raw scripts/install.ps1 | Invoke-Expression
           $out = & "$env:INARI_INSTALL_DIR\inari.exe" --version

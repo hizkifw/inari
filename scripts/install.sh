@@ -7,6 +7,7 @@
 #   INARI_VERSION      release tag to install (default: latest, e.g. v0.1.0)
 #   INARI_INSTALL_DIR  where to put the binary (default: $HOME/.local/bin)
 #   INARI_BASE_URL     release base, for mirrors and testing
+#   GITHUB_TOKEN       raises the GitHub API rate limit, if the API is needed
 #   NO_COLOR           disable colored output
 set -eu
 
@@ -80,13 +81,15 @@ esac
 
 # The /releases/latest redirect names the tag without API quota or a token.
 # For a few minutes after a release is published GitHub serves the generic
-# releases page instead, so fall back to the API before giving up.
+# releases page instead, so fall back to the API before giving up. The API
+# takes GITHUB_TOKEN for a higher rate limit, as CI's shared runners need.
 if [ -z "$version" ]; then
   version=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$base_url/latest" | sed 's#/*$##; s#.*/##')
   case "$version" in
     '' | latest | releases)
       json=$(curl -fsSL -H 'Accept: application/vnd.github+json' \
         -H 'User-Agent: inari-installer' \
+        ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
         "https://api.github.com/repos/$repo/releases/latest") ||
         die "could not determine the latest release; set INARI_VERSION to install a specific release"
       version=$(printf '%s\n' "$json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
