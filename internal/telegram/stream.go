@@ -49,7 +49,9 @@ type stream struct {
 
 // messenger is what a stream needs of Telegram, so it can be tested without.
 type messenger interface {
-	send(p part) (id int64)
+	// send posts p as a reply to message replyTo, or not as a reply when
+	// replyTo is "".
+	send(p part, replyTo string) (id int64)
 	edit(id int64, p part)
 	// draft shows a draft, and returns how long to wait before the next
 	// when Telegram asks to slow down.
@@ -155,13 +157,18 @@ func (s *stream) settle(m messenger) {
 }
 
 // show brings the messages in line with want, editing only those that
-// changed. The caller holds s.mu.
+// changed. A stretch that answers steering starts as a reply to it. The
+// caller holds s.mu.
 func (s *stream) show(m messenger) {
 	s.last = time.Now()
 	for i, p := range render(s.want) {
 		switch {
 		case i >= len(s.msgs):
-			id := m.send(p)
+			replyTo := ""
+			if i == 0 {
+				replyTo = s.want.ReplyTo
+			}
+			id := m.send(p, replyTo)
 			if id == 0 {
 				// Without the message there is nothing to edit later; the
 				// next change tries again.

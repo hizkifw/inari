@@ -24,12 +24,16 @@ func (f *fakeChat) record(s string) {
 	f.log = append(f.log, s)
 }
 
-func (f *fakeChat) send(p part) int64 {
+func (f *fakeChat) send(p part, replyTo string) int64 {
 	f.mu.Lock()
 	f.next++
 	id := f.next
 	f.mu.Unlock()
-	f.record(fmt.Sprintf("send %d %s", id, p.rich))
+	if replyTo != "" {
+		f.record(fmt.Sprintf("send %d replying to %s %s", id, replyTo, p.rich))
+	} else {
+		f.record(fmt.Sprintf("send %d %s", id, p.rich))
+	}
 	return id
 }
 

@@ -31,7 +31,11 @@ func (r *recorder) Post(conv string, p Post) {
 	for _, t := range p.Tools {
 		tools = append(tools, t.Title+"="+t.Status)
 	}
-	r.events <- fmt.Sprintf("post %d %v %q", p.ID, tools, p.Text)
+	reply := ""
+	if p.ReplyTo != "" {
+		reply = " reply=" + p.ReplyTo
+	}
+	r.events <- fmt.Sprintf("post %d %v %q%s", p.ID, tools, p.Text, reply)
 }
 
 func (r *recorder) TurnEnded(conv string, e End) {
@@ -88,12 +92,13 @@ func TestMessageWhileBusySteers(t *testing.T) {
 	// The text goes out with the call that follows it, and the call's
 	// end edits the same stretch.
 	rec.expect(t, "start", `post 0 [read a.go=in_progress] "Looking"`)
-	if err := h.Handle(ctx, Message{Conv: "test:1", Route: Route{CWD: cwd}, Author: "bob", Text: "use the helper"}); err != nil {
+	if err := h.Handle(ctx, Message{Conv: "test:1", Route: Route{CWD: cwd}, ID: "m2", Author: "bob", Text: "use the helper"}); err != nil {
 		t.Fatal(err)
 	}
+	// What kon says after reading the steering answers it, as a reply.
 	rec.expect(t,
 		`post 0 [read a.go=completed] "Looking"`,
-		`post 1 [] "Done after [bob] use the helper"`,
+		`post 1 [] "Done after [bob] use the helper" reply=m2`,
 		"end end_turn err=<nil> idle=true")
 }
 
@@ -296,5 +301,21 @@ func TestDraftsComeBeforeTheirStretchIsPosted(t *testing.T) {
 			fmt.Sscanf(quoted, "%q", &text)
 			posted[id] = text
 		}
+	}
+}
+
+func TestReadSteeringRepliesToTheNewest(t *testing.T) {
+	h := &Hub{}
+	c := &conv{steers: []steer{{"[a] one", "1"}, {"[b] two", "2"}, {"[c] three", "3"}}}
+	// Two steers reported together: the reply goes to the later.
+	if id := h.read(c, "[a] one\n\n[b] two"); id != "2" || len(c.steers) != 1 {
+		t.Fatalf("read = %q, left %v", id, c.steers)
+	}
+	// A report in a shape inari does not know reads the oldest.
+	if id := h.read(c, "something else"); id != "3" || len(c.steers) != 0 {
+		t.Fatalf("read = %q, left %v", id, c.steers)
+	}
+	if id := h.read(c, "[d] four"); id != "" {
+		t.Fatalf("read with nothing waiting = %q", id)
 	}
 }

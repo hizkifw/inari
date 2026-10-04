@@ -183,7 +183,7 @@ func (c *Connector) message(m *message) {
 	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
 	}
-	msg := hub.Message{Conv: connector + ":" + key, Route: route, Author: authorName(m), Text: text, Attachments: attachments}
+	msg := hub.Message{Conv: connector + ":" + key, Route: route, ID: strconv.FormatInt(m.MessageID, 10), Author: authorName(m), Text: text, Attachments: attachments}
 	if err := c.hub.Handle(context.Background(), msg); err != nil {
 		c.log.Error("handle message", "chat", key, "err", err)
 		c.notice(key, "⚠️ "+err.Error())
@@ -200,7 +200,7 @@ func (c *Connector) refuse(key string, user int64) {
 	} else {
 		text = fmt.Sprintf("This chat has no working directory. Set `connectors.telegram.default_cwd`, or a `cwd` for channel %s, in inari's config.json.", code(key))
 	}
-	chatMessenger{c, targetOf(key)}.send(part{rich: text, plain: text})
+	chatMessenger{c, targetOf(key)}.send(part{rich: text, plain: text}, "")
 }
 
 // stopped cancels the turn whose draft's stop button was pressed. Drafts are
@@ -451,7 +451,7 @@ func (c *Connector) stream(key string) *stream {
 func (c *Connector) notice(key string, text string) {
 	m := chatMessenger{c, targetOf(key)}
 	for _, p := range render(hub.Post{Text: text, Notice: true}) {
-		m.send(p)
+		m.send(p, "")
 	}
 }
 
@@ -470,14 +470,19 @@ type chatMessenger struct {
 }
 
 // send posts p as a rich message, or as plain text when Telegram refuses
-// the Markdown. It returns the message's ID, or 0 when it could not be sent.
-func (m chatMessenger) send(p part) int64 {
-	return m.sendMarkup(p, nil)
+// the Markdown, as a reply to message replyTo unless it is "". It returns
+// the message's ID, or 0 when it could not be sent.
+func (m chatMessenger) send(p part, replyTo string) int64 {
+	return m.sendMarkup(p, replyTo, nil)
 }
 
-func (m chatMessenger) sendMarkup(p part, markup *inlineKeyboard) int64 {
+func (m chatMessenger) sendMarkup(p part, replyTo string, markup *inlineKeyboard) int64 {
 	params := m.t.params()
 	params["rich_message"] = richMessage{Markdown: p.rich}
+	if id, err := strconv.ParseInt(replyTo, 10, 64); err == nil {
+		// A reply to a deleted message is sent as a plain one.
+		params["reply_parameters"] = map[string]any{"message_id": id, "allow_sending_without_reply": true}
+	}
 	if markup != nil {
 		params["reply_markup"] = markup
 	}

@@ -136,6 +136,19 @@ func TestDraftsShowInPrivateChats(t *testing.T) {
 	f.await(t, "sendRichMessage ", `"markdown":"Writing more"`)
 }
 
+func TestAnswerToSteeringIsAReply(t *testing.T) {
+	f := start(t)
+	f.updates <- private("slow")
+	f.await(t, "sendRichMessage ", `"markdown":"Looking`)
+	steering := private("use the helper")
+	steering.Message.MessageID = 77
+	f.updates <- steering
+	got := f.await(t, "sendRichMessage ", "Done after")
+	if !strings.Contains(got, `"reply_parameters":{"allow_sending_without_reply":true,"message_id":77}`) {
+		t.Fatalf("answer to steering is not a reply: %s", got)
+	}
+}
+
 func TestStopButtonCancelsTheTurn(t *testing.T) {
 	f := startWith(t, func(c *config.Telegram) { c.StopButton = true })
 	f.updates <- private("pause")

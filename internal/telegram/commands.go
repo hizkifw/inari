@@ -59,7 +59,7 @@ func (c *Connector) command(key string, route hub.Route, who, name, args string)
 	if err != nil {
 		text = "⚠️ " + err.Error()
 	}
-	m.sendMarkup(part{rich: text, plain: text}, markup)
+	m.sendMarkup(part{rich: text, plain: text}, "", markup)
 }
 
 func (c *Connector) run(ctx context.Context, conv string, route hub.Route, who, name, args string) (string, *inlineKeyboard, error) {

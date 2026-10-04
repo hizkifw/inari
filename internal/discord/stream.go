@@ -32,7 +32,9 @@ type stream struct {
 
 // messenger is what a stream needs of Discord, so it can be tested without.
 type messenger interface {
-	send(content string) (id string)
+	// send posts content as a reply to message replyTo, or not as a reply
+	// when replyTo is "".
+	send(content, replyTo string) (id string)
 	edit(id, content string)
 }
 
@@ -80,13 +82,18 @@ func (s *stream) settle(m messenger) {
 }
 
 // show brings the messages in line with want, editing only those that
-// changed. The caller holds s.mu.
+// changed. A stretch that answers steering starts as a reply to it. The
+// caller holds s.mu.
 func (s *stream) show(m messenger) {
 	s.last = time.Now()
 	for i, part := range render(s.want) {
 		switch {
 		case i >= len(s.msgs):
-			id := m.send(part)
+			replyTo := ""
+			if i == 0 {
+				replyTo = s.want.ReplyTo
+			}
+			id := m.send(part, replyTo)
 			if id == "" {
 				// Without the message there is nothing to edit later; the
 				// next change tries again.

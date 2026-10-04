@@ -27,6 +27,9 @@ type Message struct {
 	Conv string
 	// Route is where the conversation's session works and what it is told.
 	Route Route
+	// ID is the platform's ID for the message, so that kon's answer to it
+	// as steering can be posted as a reply. It may be empty.
+	ID string
 	// Author is the sender's display name. The session is shared, so the
 	// model is told who said what.
 	Author      string
@@ -109,6 +112,11 @@ type Post struct {
 	ID    int
 	Text  string
 	Tools []Tool
+	// ReplyTo is the Message.ID of the steering kon read just before
+	// this stretch, which the stretch most likely answers. By then the chat
+	// has moved on, so a connector shows the stretch as a reply to it. It
+	// is empty for most stretches.
+	ReplyTo string
 	// Notice marks a message from inari rather than from kon. It is a
 	// message of its own and never replaced.
 	Notice bool
@@ -204,11 +212,21 @@ type conv struct {
 	dirty   bool
 	// drafting is whether a Draft of the stretch waits in the outbox.
 	drafting bool
-	text     strings.Builder
-	tools    []Tool
-	toolAt   map[string]int
-	options  []acp.ConfigOption
-	usage    acp.Update
+	// steers are steering messages sent and not yet reported read, and
+	// replyTo the ID of the one the stretch follows.
+	steers  []steer
+	replyTo string
+	text    strings.Builder
+	tools   []Tool
+	toolAt  map[string]int
+	options []acp.ConfigOption
+	usage   acp.Update
+}
+
+// steer is a steering message kon has yet to read: its text, by which kon
+// reports it, and the ID of the chat message it came from.
+type steer struct {
+	text, id string
 }
 
 // New returns a hub that starts kon when it is first needed.
@@ -265,7 +283,17 @@ func (h *Hub) Handle(ctx context.Context, m Message) error {
 	}
 	text += files
 	if busy {
+		// It is noted before it is sent, since kon may report it read
+		// before Steer returns.
+		h.mu.Lock()
+		c.steers = append(c.steers, steer{text: text, id: m.ID})
+		h.mu.Unlock()
 		err := cl.Steer(ctx, id, text)
+		if err != nil {
+			h.mu.Lock()
+			c.steers = slices.DeleteFunc(c.steers, func(s steer) bool { return s.text == text && s.id == m.ID })
+			h.mu.Unlock()
+		}
 		// The turn may have ended since; then the message starts the next.
 		if !acp.IsCode(err, acp.CodeInvalidRequest) {
 			return err
@@ -330,6 +358,10 @@ func (h *Hub) endTurn(c *conv, stop string, err error) {
 	h.show(c)
 	h.next(c)
 	c.turns = max(c.turns-1, 0)
+	if c.turns == 0 {
+		// Steering kon never read is gone with the turn.
+		c.steers = nil
+	}
 	end := End{StopReason: stop, Err: err, Idle: c.turns == 0}
 	h.emit(c, func(out Output) { out.TurnEnded(c.key, end) })
 }
@@ -344,7 +376,7 @@ func (h *Hub) show(c *conv) {
 	c.dirty = false
 	// The stretch keeps changing after this is queued, so the post gets a
 	// copy of its calls.
-	p := Post{ID: c.stretch, Text: text, Tools: slices.Clone(c.tools)}
+	p := Post{ID: c.stretch, Text: text, Tools: slices.Clone(c.tools), ReplyTo: c.replyTo}
 	h.emit(c, func(out Output) { out.Post(c.key, p) })
 }
 
@@ -358,6 +390,27 @@ func (h *Hub) next(c *conv) {
 	c.drafting = false
 	c.text.Reset()
 	c.tools, c.toolAt = nil, map[string]int{}
+	c.replyTo = ""
+}
+
+// read takes the steering kon reports it read in text and returns the ID of
+// the newest of it. Several steers can arrive in one report, so each whose
+// text the report holds is read; a report that holds none, written some
+// other way, reads the oldest. The caller holds h.mu.
+func (h *Hub) read(c *conv, text string) string {
+	id, found := "", false
+	c.steers = slices.DeleteFunc(c.steers, func(s steer) bool {
+		if strings.Contains(text, s.text) {
+			id, found = s.id, true
+			return true
+		}
+		return false
+	})
+	if !found && len(c.steers) > 0 {
+		id = c.steers[0].id
+		c.steers = c.steers[1:]
+	}
+	return id
 }
 
 // draft queues the stretch's text for a connector that shows it as it is
@@ -656,6 +709,7 @@ func (h *Hub) watch(cl *acp.Client) {
 func (h *Hub) detach(c *conv, end End) {
 	delete(h.session, c.sessionID)
 	c.client, c.sessionID = nil, ""
+	c.steers = nil
 	if c.turns > 0 {
 		h.show(c)
 		h.next(c)
@@ -700,9 +754,10 @@ func (hd handler) Update(sessionID string, u acp.Update) {
 		}
 	case "user_message_chunk":
 		// Steering was delivered: what kon says next answers it, so it
-		// starts a new message.
+		// starts a new message, a reply to the steering.
 		h.show(c)
 		h.next(c)
+		c.replyTo = h.read(c, u.Content.Text)
 	case "usage_update":
 		c.usage = u
 	case "config_option_update":

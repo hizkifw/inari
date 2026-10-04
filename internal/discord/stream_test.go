@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ type fakeChannel struct {
 	log  []string
 }
 
-func (f *fakeChannel) send(content string) string {
+func (f *fakeChannel) send(content, replyTo string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.msgs == nil {
@@ -25,7 +26,11 @@ func (f *fakeChannel) send(content string) string {
 	}
 	id := fmt.Sprint(len(f.msgs) + 1)
 	f.msgs[id] = content
-	f.log = append(f.log, "send "+id)
+	if replyTo != "" {
+		f.log = append(f.log, "send "+id+" replying to "+replyTo)
+	} else {
+		f.log = append(f.log, "send "+id)
+	}
 	return id
 }
 
@@ -113,5 +118,18 @@ func TestStreamSkipsUnchangedMessages(t *testing.T) {
 	s.flush(f)
 	if got := f.requests(); len(got) != 1 {
 		t.Fatalf("requests = %q", got)
+	}
+}
+
+func TestStreamRepliesToSteeringOnce(t *testing.T) {
+	f := &fakeChannel{}
+	s := &stream{every: time.Millisecond}
+	// Long enough for two messages: only the first is the reply.
+	long := strings.Repeat("word ", maxMessage/4)
+	s.post(f, hub.Post{ID: 1, Text: long, ReplyTo: "m9"})
+	s.post(f, hub.Post{ID: 2, Text: "next"})
+	got := strings.Join(f.requests(), ", ")
+	if want := "send 1 replying to m9, send 2, send 3"; got != want {
+		t.Fatalf("requests = %s, want %s", got, want)
 	}
 }

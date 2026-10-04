@@ -103,7 +103,7 @@ func (c *Connector) messageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
 	}
-	msg := hub.Message{Conv: conv(m.ChannelID), Route: route, Author: authorName(m.Author, m.Member), Text: text, Attachments: attachments}
+	msg := hub.Message{Conv: conv(m.ChannelID), Route: route, ID: m.ID, Author: authorName(m.Author, m.Member), Text: text, Attachments: attachments}
 	if err := c.hub.Handle(context.Background(), msg); err != nil {
 		c.log.Error("handle message", "channel", m.ChannelID, "err", err)
 		c.notice(m.ChannelID, "⚠️ "+err.Error())
@@ -222,7 +222,9 @@ type channelMessenger struct {
 	channel string
 }
 
-func (m channelMessenger) send(content string) string { return m.c.send(m.channel, content) }
+func (m channelMessenger) send(content, replyTo string) string {
+	return m.c.sendReply(m.channel, content, replyTo)
+}
 
 func (m channelMessenger) edit(id, content string) {
 	_, err := m.c.s.ChannelMessageEditComplex(&discordgo.MessageEdit{
@@ -265,11 +267,23 @@ func (c *Connector) notice(channel, text string) {
 // without link previews, which crowd a transcript. It returns the message's
 // ID, or "" when it could not be sent.
 func (c *Connector) send(channel, content string) string {
-	msg, err := c.s.ChannelMessageSendComplex(channel, &discordgo.MessageSend{
+	return c.sendReply(channel, content, "")
+}
+
+// sendReply sends content as send does, as a reply to message replyTo
+// unless it is "". The reply does not ping its author, who is in the
+// conversation already, and a reply to a deleted message is sent as a plain
+// one.
+func (c *Connector) sendReply(channel, content, replyTo string) string {
+	ms := &discordgo.MessageSend{
 		Content:         content,
 		AllowedMentions: &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMentionType{}},
 		Flags:           discordgo.MessageFlagsSuppressEmbeds,
-	})
+	}
+	if replyTo != "" {
+		ms.Reference = &discordgo.MessageReference{MessageID: replyTo, ChannelID: channel, FailIfNotExists: new(false)}
+	}
+	msg, err := c.s.ChannelMessageSendComplex(channel, ms)
 	if err != nil {
 		c.log.Error("send message", "channel", channel, "err", err)
 		return ""
