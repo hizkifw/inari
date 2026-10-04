@@ -244,3 +244,57 @@ func TestAttachmentsAreSavedAndListed(t *testing.T) {
 		t.Fatalf("attachment directory outlived Close: %v", err)
 	}
 }
+
+// drafter is a recorder that is shown drafts too.
+type drafter struct{ recorder }
+
+func (d *drafter) Draft(conv string, p Post) {
+	d.events <- fmt.Sprintf("draft %d %q", p.ID, p.Text)
+}
+
+func TestDraftsComeBeforeTheirStretchIsPosted(t *testing.T) {
+	h, _, _ := newHub(t)
+	d := &drafter{recorder{events: make(chan string, 64)}}
+	h.Register("draft", d)
+	if err := h.Handle(context.Background(), Message{Conv: "draft:1", Route: Route{CWD: t.TempDir()}, Author: "alice", Text: "story"}); err != nil {
+		t.Fatal(err)
+	}
+	type draft struct {
+		id   int
+		text string
+	}
+	var drafts []draft
+	posted := map[int]string{}
+	for {
+		var ev string
+		select {
+		case ev = <-d.events:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for the turn to end")
+		}
+		var id int
+		var text string
+		switch {
+		case strings.HasPrefix(ev, "end"):
+			// Drafts coalesce, so which ones arrive depends on timing; what
+			// holds is that each is the start of its stretch, shown before it.
+			for _, dr := range drafts {
+				if !strings.HasPrefix(posted[dr.id], dr.text) {
+					t.Fatalf("draft %q of stretch %d is not the start of %q", dr.text, dr.id, posted[dr.id])
+				}
+			}
+			return
+		case strings.HasPrefix(ev, "draft"):
+			fmt.Sscanf(ev, "draft %d %q", &id, &text)
+			if _, ok := posted[id]; ok {
+				t.Fatalf("%s came after stretch %d was posted", ev, id)
+			}
+			drafts = append(drafts, draft{id, text})
+		case strings.HasPrefix(ev, "post"):
+			fmt.Sscanf(ev, "post %d", &id)
+			_, quoted, _ := strings.Cut(ev, "] ")
+			fmt.Sscanf(quoted, "%q", &text)
+			posted[id] = text
+		}
+	}
+}

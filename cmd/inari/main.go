@@ -23,6 +23,7 @@ import (
 	"github.com/hizkifw/inari/internal/discord"
 	"github.com/hizkifw/inari/internal/hub"
 	"github.com/hizkifw/inari/internal/store"
+	"github.com/hizkifw/inari/internal/telegram"
 )
 
 func main() {
@@ -101,6 +102,12 @@ func run() error {
 		h.Register("discord", c)
 		connectors = append(connectors, c)
 		routes["discord"] = c.Route
+	}
+	if t := cfg.Connectors.Telegram; t != nil {
+		c := telegram.New(t, h, log)
+		h.Register("telegram", c)
+		connectors = append(connectors, c)
+		routes["telegram"] = c.Route
 	}
 	if err := startCron(ctx, cfg, h, routes, log); err != nil {
 		return err

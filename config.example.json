@@ -17,6 +17,20 @@
       },
       "default_cwd": "/srv/projects",
       "instructions": "Keep replies brief."
+    },
+    "telegram": {
+      "token": "123456:your-bot-token",
+      "access": {
+        "users": ["111111111"],
+        "channels": ["-1001234567890"]
+      },
+      "channels": {
+        "-1001234567890/42": {
+          "cwd": "/srv/projects/website",
+          "instructions": "This topic is for the company website."
+        }
+      },
+      "default_cwd": "/srv/projects"
     }
   }
 }

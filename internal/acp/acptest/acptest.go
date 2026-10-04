@@ -3,7 +3,8 @@
 // so a test spawns it as it would spawn kon.
 //
 // A prompt is echoed back as "echo: <prompt>", except that a prompt ending in
-// "slow" starts a turn that waits for steering, one ending in "story" plays a
+// "slow" starts a turn that waits for steering, one ending in "pause" stops
+// mid-sentence until it is steered, one ending in "story" plays a
 // turn of text and tool calls, one ending in "instructions?" answers with the
 // session's instructions, and one ending in "die" exits mid-turn. A cancel
 // ends a waiting turn as cancelled.
@@ -169,6 +170,15 @@ func serve(r io.Reader, w io.Writer) {
 					update(id, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed"})
 					text(id, "user_message_chunk", steer)
 					text(id, "agent_message_chunk", "Done after "+steer)
+				case strings.HasSuffix(prompt, "pause"):
+					text(id, "agent_message_chunk", "Writing")
+					select {
+					case <-steers:
+					case <-cancels:
+						reply(map[string]any{"stopReason": "cancelled"})
+						return
+					}
+					text(id, "agent_message_chunk", " more")
 				default:
 					text(id, "agent_message_chunk", "echo: "+prompt)
 				}

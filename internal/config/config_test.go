@@ -110,8 +110,8 @@ func TestExampleConfigParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Connectors.Discord == nil {
-		t.Fatal("example configures no discord connector")
+	if c.Connectors.Discord == nil || c.Connectors.Telegram == nil {
+		t.Fatal("example does not configure every connector")
 	}
 }
 
@@ -126,7 +126,7 @@ func TestCronHome(t *testing.T) {
 		t.Fatalf("cron = %+v", c.Cron)
 	}
 	for name, cron := range map[string]string{
-		"unknown connector": `{"home":"telegram:1"}`,
+		"unknown connector": `{"home":"slack:1"}`,
 		"no channel":        `{"home":"discord"}`,
 		"unserved channel":  `{"home":"discord:2"}`,
 		"bad timezone":      `{"home":"discord:1","timezone":"Mars/Olympus"}`,
@@ -135,6 +135,23 @@ func TestCronHome(t *testing.T) {
 		if _, err := Load(write(t, `{`+base+`,"cron":`+cron+`}`)); err == nil {
 			t.Errorf("%s: loaded", name)
 		}
+	}
+}
+
+func TestTelegramTopicsFallBackToTheirChat(t *testing.T) {
+	dir, topic := t.TempDir(), t.TempDir()
+	c, err := Load(write(t, `{"connectors":{"telegram":{"token":"x","channels":{"-100":{"cwd":"`+dir+`"},"-100/7":{"cwd":"`+topic+`"}}}},"cron":{"home":"telegram:-100/3"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg := c.Connectors.Telegram
+	for channel, want := range map[string]string{"-100": dir, "-100/3": dir, "-100/7": topic, "-200/3": ""} {
+		if got := tg.CWD(tg.RouteKey(channel)); got != want {
+			t.Errorf("cwd of %s = %q, want %q", channel, got, want)
+		}
+	}
+	if _, err := Load(write(t, `{"connectors":{"telegram":{}}}`)); err == nil {
+		t.Error("loaded a telegram connector with no token")
 	}
 }
 

@@ -90,6 +90,16 @@ type Output interface {
 	TurnEnded(conv string, e End)
 }
 
+// Drafter is an Output that shows kon's text while it is written, before
+// its stretch is posted, such as Telegram's streamed drafts. A connector
+// that implements it gets Draft calls as well as Post calls.
+type Drafter interface {
+	// Draft shows the stretch p.ID's text so far. It is called again as the
+	// text grows, but only with the newest text when the connector falls
+	// behind, and never after the stretch's first Post.
+	Draft(conv string, p Post)
+}
+
 // Post is a stretch of a turn worth one chat message: something kon said and
 // the tool calls it made after saying it. A stretch is first posted once its
 // text is complete, when its first tool call starts or the turn ends, and
@@ -192,11 +202,13 @@ type conv struct {
 	// and dirty whether it changed since it was last posted.
 	stretch int
 	dirty   bool
-	text    strings.Builder
-	tools   []Tool
-	toolAt  map[string]int
-	options []acp.ConfigOption
-	usage   acp.Update
+	// drafting is whether a Draft of the stretch waits in the outbox.
+	drafting bool
+	text     strings.Builder
+	tools    []Tool
+	toolAt   map[string]int
+	options  []acp.ConfigOption
+	usage    acp.Update
 }
 
 // New returns a hub that starts kon when it is first needed.
@@ -341,8 +353,39 @@ func (h *Hub) show(c *conv) {
 func (h *Hub) next(c *conv) {
 	c.stretch++
 	c.dirty = false
+	// A draft still queued belongs to the old stretch and will skip itself,
+	// so the new stretch queues its own.
+	c.drafting = false
 	c.text.Reset()
 	c.tools, c.toolAt = nil, map[string]int{}
+}
+
+// draft queues the stretch's text for a connector that shows it as it is
+// written. Chunks arrive far faster than a chat API takes them, so at most
+// one draft waits in the outbox, and it reads the newest text when it runs.
+// The caller holds h.mu.
+func (h *Hub) draft(c *conv) {
+	name, _, _ := strings.Cut(c.key, ":")
+	d, ok := h.outs[name].(Drafter)
+	if !ok || c.drafting {
+		return
+	}
+	c.drafting = true
+	id := c.stretch
+	c.out.do(func() {
+		h.mu.Lock()
+		if c.stretch != id {
+			// The stretch was posted, which queued its Post behind this.
+			h.mu.Unlock()
+			return
+		}
+		c.drafting = false
+		text := strings.TrimSpace(c.text.String())
+		h.mu.Unlock()
+		if text != "" {
+			d.Draft(c.key, Post{ID: id, Text: text})
+		}
+	})
 }
 
 func (h *Hub) notice(c *conv, text string) {
@@ -641,6 +684,7 @@ func (hd handler) Update(sessionID string, u acp.Update) {
 		}
 		c.text.WriteString(u.Content.Text)
 		c.dirty = true
+		h.draft(c)
 	case "tool_call":
 		c.toolAt[u.ToolCallID] = len(c.tools)
 		c.tools = append(c.tools, Tool{Title: u.Title, Status: u.Status})

@@ -61,7 +61,8 @@ type Kon struct {
 // Connectors has one section per chat platform. A nil section is a connector
 // that does not run.
 type Connectors struct {
-	Discord *Discord `json:"discord"`
+	Discord  *Discord  `json:"discord"`
+	Telegram *Telegram `json:"telegram"`
 }
 
 // Discord configures the Discord connector.
@@ -75,6 +76,29 @@ type Discord struct {
 	Guilds []string `json:"guilds"`
 	Access Access   `json:"access"`
 	Routes
+}
+
+// Telegram configures the Telegram connector. Its channels are chat IDs,
+// and a forum topic is "<chat id>/<topic id>"; a topic with no settings of
+// its own uses its chat's.
+type Telegram struct {
+	// Token is the bot token from @BotFather.
+	Token string `json:"token"`
+	// APIURL is the Bot API server, for a local one. It defaults to
+	// https://api.telegram.org.
+	APIURL string `json:"api_url"`
+	Access Access `json:"access"`
+	Routes
+}
+
+// RouteKey is the key channel's settings are under: a topic's own, when it
+// has any, or else its chat's.
+func (t *Telegram) RouteKey(channel string) string {
+	if _, ok := t.Channels[channel]; ok {
+		return channel
+	}
+	chat, _, _ := strings.Cut(channel, "/")
+	return chat
 }
 
 // Access is who may talk to kon through a connector. kon runs commands
@@ -260,16 +284,28 @@ func (c *Config) finish() error {
 			return fmt.Errorf("discord: %w", err)
 		}
 	}
+	if t := c.Connectors.Telegram; t != nil {
+		if t.Token == "" {
+			return errors.New("telegram: no token; set token")
+		}
+		if err := t.Routes.validate(); err != nil {
+			return fmt.Errorf("telegram: %w", err)
+		}
+	}
 	if home := c.Cron.Home; home != "" {
 		connector, channel, _ := strings.Cut(home, ":")
-		var routes *Routes
-		if connector == "discord" && c.Connectors.Discord != nil {
-			routes = &c.Connectors.Discord.Routes
+		known, cwd := false, ""
+		switch {
+		case connector == "discord" && c.Connectors.Discord != nil:
+			known, cwd = true, c.Connectors.Discord.CWD(channel)
+		case connector == "telegram" && c.Connectors.Telegram != nil:
+			t := c.Connectors.Telegram
+			known, cwd = true, t.CWD(t.RouteKey(channel))
 		}
-		if routes == nil || channel == "" {
-			return fmt.Errorf("cron: home %q names no configured connector; write it as \"discord:<channel id>\"", home)
+		if !known || channel == "" {
+			return fmt.Errorf("cron: home %q names no configured connector; write it as \"<connector>:<channel id>\", such as \"discord:123\"", home)
 		}
-		if routes.CWD(channel) == "" {
+		if cwd == "" {
 			return fmt.Errorf("cron: home %q has no working directory; give the channel a cwd or set default_cwd", home)
 		}
 	}

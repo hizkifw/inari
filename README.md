@@ -2,7 +2,8 @@
 
 inari puts [kon](https://kon.kitsu.red) in your chat. It runs `kon acp` and
 connects each chat channel to its own kon session over the
-[Agent Client Protocol](https://agentclientprotocol.com). v0 speaks Discord.
+[Agent Client Protocol](https://agentclientprotocol.com). It speaks Discord
+and Telegram.
 
 It is named for Inari, whose foxes carry messages between the shrine and
 the people; inari carries them between your chat and kon.
@@ -20,11 +21,16 @@ run anything kon can, as the user inari runs as. Trust accordingly.
   directory per session and listed in the message by path, so kon reads it
   with its tools as it would any file. `/new` removes the session's files,
   and inari removes them all when it stops.
-- **A message per thing kon says.** Text is not streamed token by token:
-  each stretch of it is posted once complete, as its own message. The tool
-  calls kon makes after it are edited into that message as small lines
-  (`… read main.go`, then `✓ read main.go`), at most one edit per 1.5
-  seconds. The typing indicator shows while kon works.
+- **A message per thing kon says.** Each stretch of text is posted once
+  complete, as its own message. The tool calls kon makes after it are edited
+  into that message as small lines (`… read main.go`, then
+  `✓ read main.go`), at most one edit per 1.5 seconds on Discord and 2 on
+  Telegram. The typing indicator shows while kon works.
+- **Streaming in Telegram private chats.** There, kon's text streams in
+  token by token as a Telegram draft while it is written, with a stop
+  button that cancels the turn, and becomes a message once complete.
+  Telegram offers drafts only in private chats, so groups get whole
+  messages.
 - **Background jobs.** When a job kon started finishes after its turn, kon
   takes a turn of its own and the result is posted to the channel.
 - **Cron jobs and reminders.** kon schedules its own with `inari cron`. A
@@ -37,13 +43,9 @@ run anything kon can, as the user inari runs as. Trust accordingly.
 
 1. Install a kon with ACP support (v0.1.15 or later). Run `kon` once to log
    in and pick a default model; inari uses kon's own configuration.
-2. In the [Discord developer portal](https://discord.com/developers/applications),
-   create an application and its bot, and turn on the **Message Content**
-   privileged intent.
-3. Invite the bot with the `bot` and `applications.commands` scopes and the
-   View Channels, Send Messages, Send Messages in Threads, and Read Message
-   History permissions.
-4. Install inari. On Linux and macOS:
+2. Create a bot on Discord, Telegram, or both; see
+   [Discord](#discord) and [Telegram](#telegram) below.
+3. Install inari. On Linux and macOS:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/hizkifw/inari/main/scripts/install.sh | sh
@@ -63,7 +65,7 @@ run anything kon can, as the user inari runs as. Trust accordingly.
    go install github.com/hizkifw/inari/cmd/inari@latest
    ```
 
-5. Write `~/.config/inari/config.json` (`$XDG_CONFIG_HOME/inari` when that
+4. Write `~/.config/inari/config.json` (`$XDG_CONFIG_HOME/inari` when that
    is set, `%APPDATA%\inari` on Windows), starting from
    [config.example.json](config.example.json), and run:
 
@@ -71,9 +73,30 @@ run anything kon can, as the user inari runs as. Trust accordingly.
    inari
    ```
 
-   The file holds the bot token, so keep it private: `chmod 600` it.
+   The file holds the bot tokens, so keep it private: `chmod 600` it.
 
    `inari -config path` reads another file, and `-debug` logs more.
+
+### Discord
+
+1. In the [Discord developer portal](https://discord.com/developers/applications),
+   create an application and its bot, and turn on the **Message Content**
+   privileged intent.
+2. Invite the bot with the `bot` and `applications.commands` scopes and the
+   View Channels, Send Messages, Send Messages in Threads, and Read Message
+   History permissions.
+
+### Telegram
+
+1. Ask [@BotFather](https://t.me/BotFather) for a new bot with `/newbot`,
+   and put its token in `connectors.telegram.token`.
+2. To use it in a group, turn off its privacy mode (`/setprivacy` in
+   @BotFather) before adding it, or make it an admin; otherwise Telegram
+   shows it only commands and replies to it. A forum topic is a
+   conversation of its own.
+3. Telegram's apps show no IDs. Message the bot privately and it replies
+   with your user ID to add to `access.users`. For a group's ID, run
+   `inari -debug`: it logs the user and chat of each message it ignores.
 
 ## Running in the background
 
@@ -120,6 +143,14 @@ other running inari keeps the old version until it restarts.
       "channels": {"…": {"cwd": "/abs/path", "instructions": "…"}},
       "default_cwd": "/abs/path",
       "instructions": "…"
+    },
+    "telegram": {
+      "token": "…",
+      "api_url": "",
+      "access": {"users": ["…"], "channels": ["…"]},
+      "channels": {"…": {"cwd": "/abs/path", "instructions": "…"}},
+      "default_cwd": "/abs/path",
+      "instructions": "…"
     }
   }
 }
@@ -130,13 +161,18 @@ other running inari keeps the old version until it restarts.
 | `kon` | How to start kon. Defaults to `kon acp` from PATH. |
 | `state_dir` | Where inari keeps its state. Defaults to `$XDG_STATE_HOME/inari`. |
 | `token` | The bot token. |
-| `guilds` | Servers to register slash commands in, where they appear at once. Empty registers them globally, which can take a while to show and also works in DMs. |
+| `guilds` | Discord only: servers to register slash commands in, where they appear at once. Empty registers them globally, which can take a while to show and also works in DMs. |
+| `api_url` | Telegram only: a [local Bot API server](https://github.com/tdlib/telegram-bot-api) to use instead of Telegram's. |
 | `access.users` | User IDs trusted in any channel inari serves. |
 | `access.channels` | Channel IDs where everyone is trusted. |
 | `channels.<id>.cwd` | That channel's working directory. |
 | `default_cwd` | The working directory of a channel with none of its own. Leave it empty to serve only listed channels. |
 | `instructions` | Told to every channel's new sessions, such as house rules. |
 | `channels.<id>.instructions` | Told to that channel's new sessions, after the connector's, such as what the channel is for. |
+
+On Telegram, a channel is a chat ID, and a forum topic is
+`<chat id>/<topic id>`. A topic with no `channels` entry of its own uses its
+chat's, and everyone in a trusted chat is trusted in its topics.
 
 A message is answered only when its channel has a working directory **and**
 its author or channel is trusted. Everything else is ignored. Unknown keys
@@ -152,8 +188,8 @@ Each new session's system prompt gets, after kon's own and any `AGENTS.md`
 in its directory:
 
 1. that it is in a group chat where each message starts with `[name]`;
-2. how Discord shows its replies: which Markdown renders, the 2000-character
-   split, and that people see tool calls but not their output;
+2. how the platform shows its replies: which Markdown renders, where long
+   messages split, and that people see tool calls but not their output;
 3. the connector's `instructions`, then the channel's.
 
 kon fixes a session's system prompt when it starts, so changed instructions
@@ -178,7 +214,7 @@ Name a home channel to turn cron on:
 
 | Key | Meaning |
 | --- | --- |
-| `cron.home` | The channel a job's report goes to, as `discord:<channel id>`. It must be a channel inari serves. |
+| `cron.home` | The channel a job's report goes to, as `discord:<channel id>` or `telegram:<chat id>`. It must be a channel inari serves. |
 | `cron.timezone` | Where schedules are read, as an IANA name. Defaults to the machine's. |
 | `cron.timeout` | How long a run may take before it is stopped. Defaults to `1h`. |
 
@@ -215,15 +251,18 @@ the channel as each arrives.
 - A job whose last run is still going skips its next one.
 - Jobs are plain files in `$XDG_STATE_HOME/inari/cron/`, one per job.
 
-## Slash commands
+## Commands
+
+Discord offers these as slash commands; on Telegram they are bot commands,
+listed in the chat's command menu.
 
 | Command | Does |
 | --- | --- |
 | `/cancel` | Stop the running turn and the messages waiting behind it. |
 | `/new` | Close the channel's session; the next message starts a fresh one. |
 | `/compact` | Summarize the conversation to free context. |
-| `/model [name]` | Show or set the model, with autocomplete. |
-| `/effort [level]` | Show or set the reasoning effort, with autocomplete. |
+| `/model [name]` | Show or set the model, with autocomplete on Discord and a button per model on Telegram. |
+| `/effort [level]` | Show or set the reasoning effort, likewise. |
 | `/status` | Session, model, context use, and cost. |
 | `/jobs` | List background jobs. |
 | `/kill id` | Stop a background job. |
