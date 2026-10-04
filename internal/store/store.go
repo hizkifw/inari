@@ -17,6 +17,14 @@ import (
 type Binding struct {
 	SessionID string `json:"session_id"`
 	CWD       string `json:"cwd"`
+	// Busy is whether a turn was running when inari last saw the
+	// conversation. One still set at startup was cut off by inari
+	// stopping, and is resumed.
+	Busy bool `json:"busy,omitempty"`
+	// Resumes counts the times in a row the conversation's turn was
+	// resumed, so a turn that keeps restarting inari, such as one running
+	// an upgrade that fails, is not resumed forever.
+	Resumes int `json:"resumes,omitempty"`
 }
 
 // Store is the conversation-to-session map, written through on every change.
@@ -56,6 +64,38 @@ func (s *Store) Set(conv string, b Binding) error {
 	defer s.mu.Unlock()
 	s.m[conv] = b
 	return s.save()
+}
+
+// SetBusy marks whether conv has a turn running. A turn that ends on its own
+// also clears the count of resumes. A conversation with no binding is left
+// alone.
+func (s *Store) SetBusy(conv string, busy bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.m[conv]
+	if !ok || b.Busy == busy && (busy || b.Resumes == 0) {
+		return nil
+	}
+	b.Busy = busy
+	if !busy {
+		b.Resumes = 0
+	}
+	s.m[conv] = b
+	return s.save()
+}
+
+// Interrupted returns the conversations whose turns were running when inari
+// last stopped.
+func (s *Store) Interrupted() map[string]Binding {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]Binding{}
+	for conv, b := range s.m {
+		if b.Busy {
+			out[conv] = b
+		}
+	}
+	return out
 }
 
 // Delete forgets conv's binding.

@@ -77,7 +77,7 @@ func TestPromptIsAttributedAndPosted(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.expect(t, "start", `post 0 [] "echo: [alice] hi"`, "end end_turn err=<nil> idle=true")
-	if b, ok := st.Get("test:1"); !ok || b.CWD != cwd || b.SessionID == "" {
+	if b, ok := st.Get("test:1"); !ok || b.CWD != cwd || b.SessionID == "" || b.Busy {
 		t.Fatalf("binding = %+v, %v", b, ok)
 	}
 }
@@ -328,4 +328,42 @@ func TestRepliesQuoteWhatTheyReplyTo(t *testing.T) {
 	}
 	// Brackets go, so the quote cannot close the tag early.
 	rec.expect(t, "start", `post 0 [] "echo: [alice, replying to you: \"Shall I deploy now?\"] yes"`)
+}
+
+func TestTurnsCutOffByStoppingAreResumed(t *testing.T) {
+	h, rec, st := newHub(t)
+	cwd := t.TempDir()
+	if err := h.Handle(context.Background(), Message{Conv: "test:1", Route: Route{CWD: cwd}, Author: "alice", Text: "slow"}); err != nil {
+		t.Fatal(err)
+	}
+	rec.expect(t, "start", `post 0 [read a.go=in_progress] "Looking"`)
+	h.Close()
+	before, _ := st.Get("test:1")
+	if !before.Busy {
+		t.Fatal("a turn cut off by stopping is not marked busy")
+	}
+
+	// inari starts again with the same store.
+	h2 := New(Kon{Command: acptest.Command(t)}, "test", st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(h2.Close)
+	rec2 := &recorder{events: make(chan string, 64)}
+	h2.Register("test", rec2)
+	h2.Resume(context.Background(), func(string) (Route, bool) { return Route{CWD: cwd}, true })
+	rec2.expect(t, `post 0 [] "inari restarted while kon was working; resuming."`, "start", `post 0 [] "echo: [inari] Your last turn was cut off`, "end end_turn")
+	after, _ := st.Get("test:1")
+	if after.SessionID != before.SessionID || after.Busy || after.Resumes != 0 {
+		t.Fatalf("binding after resuming = %+v, before %+v", after, before)
+	}
+}
+
+func TestTurnsCutOffAgainAndAgainAreLeft(t *testing.T) {
+	h, rec, st := newHub(t)
+	cwd := t.TempDir()
+	st.Set("test:1", store.Binding{SessionID: "ses_x", CWD: cwd, Busy: true, Resumes: maxResumes})
+	st.Set("test:2", store.Binding{SessionID: "ses_y", CWD: "/moved", Busy: true})
+	h.Resume(context.Background(), func(string) (Route, bool) { return Route{CWD: cwd}, true })
+	rec.expect(t, `post 0 [] "inari restarted while kon was working, again`)
+	if left := st.Interrupted(); len(left) != 0 {
+		t.Fatalf("still marked busy: %v", left)
+	}
 }

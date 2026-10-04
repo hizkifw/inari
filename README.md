@@ -43,7 +43,10 @@ run anything kon can, as the user inari runs as. Trust accordingly.
   with who it replies to and the start of what they said, so "do that one"
   makes sense in a busy chat.
 - **Sessions survive restarts.** inari remembers each channel's session in
-  `$XDG_STATE_HOME/inari/sessions.json` and resumes it.
+  `$XDG_STATE_HOME/inari/sessions.json` and resumes it. A turn that inari
+  stopping cut off, such as by an upgrade kon ran, is resumed when inari
+  starts again, and kon is told to pick up where it stopped. One cut off
+  twice in a row is left for a person to restart.
 
 ## Setup
 

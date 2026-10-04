@@ -190,6 +190,9 @@ type Hub struct {
 	mu sync.Mutex
 	// extra is what SetInstructions adds.
 	extra string
+	// closing is set once Close begins: turns that end from then on were
+	// cut off by inari stopping, so they stay marked busy, to be resumed.
+	closing bool
 	// attachments is the temporary directory attachments are saved under,
 	// or "" until the first is.
 	attachments string
@@ -263,6 +266,7 @@ func (h *Hub) Register(connector string, out Output) {
 // removes the saved attachments.
 func (h *Hub) Close() {
 	h.mu.Lock()
+	h.closing = true
 	c, dir := h.client, h.attachments
 	h.attachments = ""
 	h.mu.Unlock()
@@ -330,6 +334,47 @@ func (h *Hub) Handle(ctx context.Context, m Message) error {
 	return nil
 }
 
+// maxResumes is how many times in a row a cut-off turn is resumed. A turn
+// that keeps restarting inari, such as one whose upgrade keeps failing,
+// stops there.
+const maxResumes = 2
+
+// resumeText tells kon why it is prompted after a restart. The turn may
+// have been what restarted inari, such as by upgrading it.
+const resumeText = "Your last turn was cut off because inari restarted, which the turn itself may have caused, such as by upgrading inari. " +
+	"Continue the work from where it stopped, checking what was already done first. If it was finished, say so in a sentence."
+
+// Resume continues the turns that inari stopping cut off: each such
+// conversation's session is resumed and told so, and kon picks its work up.
+// route gives a conversation's route, or false when it is no longer
+// served. Call it once the connectors are registered.
+func (h *Hub) Resume(ctx context.Context, route func(conv string) (Route, bool)) {
+	for conv, b := range h.store.Interrupted() {
+		r, ok := route(conv)
+		if !ok || r.CWD != b.CWD {
+			// The conversation is gone, or moved and starts a new
+			// session, so there is nothing to continue.
+			h.store.SetBusy(conv, false)
+			continue
+		}
+		if b.Resumes >= maxResumes {
+			h.store.SetBusy(conv, false)
+			h.Notice(conv, "inari restarted while kon was working, again, so it was not resumed this time. Send a message to continue.")
+			continue
+		}
+		b.Resumes++
+		if err := h.store.Set(conv, b); err != nil {
+			h.log.Error("save session binding", "conv", conv, "err", err)
+		}
+		h.log.Info("resume interrupted turn", "conv", conv, "session", b.SessionID)
+		h.Notice(conv, "inari restarted while kon was working; resuming.")
+		if err := h.Handle(ctx, Message{Conv: conv, Route: r, Author: "inari", Text: resumeText}); err != nil {
+			h.log.Error("resume interrupted turn", "conv", conv, "err", err)
+			h.Notice(conv, "⚠️ Could not resume: "+err.Error())
+		}
+	}
+}
+
 // Compact compacts the session, as /compact does in kon.
 func (h *Hub) Compact(ctx context.Context, conv string, route Route) error {
 	c, cl, err := h.open(ctx, conv, route)
@@ -351,7 +396,8 @@ func (h *Hub) prompt(c *conv, cl *acp.Client, blocks []acp.ContentBlock) {
 	h.beginTurn(c)
 	h.mu.Unlock()
 	if save {
-		if err := h.store.Set(c.key, store.Binding{SessionID: id, CWD: cwd}); err != nil {
+		// The turn has begun, so the binding starts busy.
+		if err := h.store.Set(c.key, store.Binding{SessionID: id, CWD: cwd, Busy: true}); err != nil {
 			h.log.Error("save session binding", "conv", c.key, "err", err)
 		}
 	}
@@ -375,7 +421,20 @@ func (h *Hub) prompt(c *conv, cl *acp.Client, blocks []acp.ContentBlock) {
 func (h *Hub) beginTurn(c *conv) {
 	c.turns++
 	if c.turns == 1 {
+		h.setBusy(c, true)
 		h.emit(c, func(out Output) { out.TurnStarted(c.key) })
+	}
+}
+
+// setBusy records whether c has a turn running, so a restart knows what it
+// cut off. Turns that end once inari is stopping were cut off, so they stay
+// busy. The caller holds h.mu.
+func (h *Hub) setBusy(c *conv, busy bool) {
+	if !c.saved || c.detached || !busy && h.closing {
+		return
+	}
+	if err := h.store.SetBusy(c.key, busy); err != nil {
+		h.log.Error("save session binding", "conv", c.key, "err", err)
 	}
 }
 
@@ -388,6 +447,7 @@ func (h *Hub) endTurn(c *conv, stop string, err error) {
 	if c.turns == 0 {
 		// Steering kon never read is gone with the turn.
 		c.steers = nil
+		h.setBusy(c, false)
 	}
 	end := End{StopReason: stop, Err: err, Idle: c.turns == 0}
 	h.emit(c, func(out Output) { out.TurnEnded(c.key, end) })
@@ -475,6 +535,11 @@ func (h *Hub) notice(c *conv, text string) {
 // emit queues f for the connector serving c, which is looked up now, under
 // h.mu, and called later, off it. The caller holds h.mu.
 func (h *Hub) emit(c *conv, f func(Output)) {
+	if h.closing {
+		// The connectors have stopped, and a turn cut off now is resumed
+		// when inari starts again, so there is nothing to tell.
+		return
+	}
 	name, _, _ := strings.Cut(c.key, ":")
 	out, ok := h.outs[name]
 	if !ok {
@@ -741,6 +806,7 @@ func (h *Hub) detach(c *conv, end End) {
 		h.show(c)
 		h.next(c)
 		c.turns = 0
+		h.setBusy(c, false)
 		h.emit(c, func(out Output) { out.TurnEnded(c.key, end) })
 	}
 }

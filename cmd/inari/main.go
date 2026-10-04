@@ -127,6 +127,9 @@ func run() error {
 			errs <- err
 		}()
 	}
+	// Turns that inari stopping cut off pick up where they were, once the
+	// connectors can show them.
+	go h.Resume(ctx, resolver(routes))
 	var all []error
 	for range connectors {
 		all = append(all, <-errs)
