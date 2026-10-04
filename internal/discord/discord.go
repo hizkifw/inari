@@ -103,7 +103,8 @@ func (c *Connector) messageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
 	}
-	msg := hub.Message{Conv: conv(m.ChannelID), Route: route, ID: m.ID, Author: authorName(m.Author, m.Member), Text: text, Attachments: attachments}
+	msg := hub.Message{Conv: conv(m.ChannelID), Route: route, ID: m.ID, Author: authorName(m.Author, m.Member), Text: text, Attachments: attachments,
+		Quote: quote(s, m.ReferencedMessage)}
 	if err := c.hub.Handle(context.Background(), msg); err != nil {
 		c.log.Error("handle message", "channel", m.ChannelID, "err", err)
 		c.notice(m.ChannelID, "⚠️ "+err.Error())
@@ -156,6 +157,22 @@ func (c *Connector) download(list []*discordgo.MessageAttachment) ([]hub.Attachm
 		out = append(out, hub.Attachment{Name: a.Filename, MIME: a.ContentType, Data: data})
 	}
 	return out, nil
+}
+
+// quote is the message m replies to, as the model is shown it, or nil when
+// it replies to none.
+func quote(s *discordgo.Session, ref *discordgo.Message) *hub.Quote {
+	if ref == nil || ref.Author == nil {
+		return nil
+	}
+	q := &hub.Quote{Author: authorName(ref.Author, ref.Member), Text: ref.ContentWithMentionsReplaced()}
+	if ref.Author.ID == s.State.User.ID {
+		q.Author = "you"
+	}
+	if strings.TrimSpace(q.Text) == "" && len(ref.Attachments) > 0 {
+		q.Text = "(an attachment)"
+	}
+	return q
 }
 
 // authorName is how the model is told who spoke: the name shown in the

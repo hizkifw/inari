@@ -35,7 +35,22 @@ type Message struct {
 	Author      string
 	Text        string
 	Attachments []Attachment
+	// Quote is the message this one replies to, if any, so the model knows
+	// what "this" or "that one" means in a busy chat.
+	Quote *Quote
 }
+
+// Quote is a message replied to: who wrote it, "you" when kon did, and its
+// text, which the hub shortens.
+type Quote struct {
+	Author string
+	Text   string
+}
+
+// maxQuote bounds how much of a replied-to message the model is shown. The
+// start is enough to tell which message it was; kon has the rest in its
+// transcript or can ask.
+const maxQuote = 200
 
 // Route is how a conversation's session starts: the directory it works in
 // and the connector's instructions for it, such as how the platform renders
@@ -272,10 +287,19 @@ func (h *Hub) Handle(ctx context.Context, m Message) error {
 	}
 	// A name with brackets in it could pass for another tag, such as a
 	// cron notice's.
-	author := strings.NewReplacer("[", "", "]", "").Replace(m.Author)
-	text := fmt.Sprintf("[%s] %s", author, m.Text)
+	unbracket := strings.NewReplacer("[", "", "]", "")
+	author := unbracket.Replace(m.Author)
+	tag := author
+	if q := m.Quote; q != nil {
+		quoted := strings.Join(strings.Fields(q.Text), " ")
+		if r := []rune(quoted); len(r) > maxQuote {
+			quoted = string(r[:maxQuote-1]) + "…"
+		}
+		tag = fmt.Sprintf("%s, replying to %s: %q", author, unbracket.Replace(q.Author), unbracket.Replace(quoted))
+	}
+	text := fmt.Sprintf("[%s] %s", tag, m.Text)
 	if strings.TrimSpace(m.Text) == "" {
-		text = fmt.Sprintf("[%s] sent %d attachment(s).", author, len(m.Attachments))
+		text = fmt.Sprintf("[%s] sent %d attachment(s).", tag, len(m.Attachments))
 	}
 	h.mu.Lock()
 	busy, id := c.turns > 0, c.sessionID

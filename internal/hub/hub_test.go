@@ -319,3 +319,13 @@ func TestReadSteeringRepliesToTheNewest(t *testing.T) {
 		t.Fatalf("read with nothing waiting = %q", id)
 	}
 }
+
+func TestRepliesQuoteWhatTheyReplyTo(t *testing.T) {
+	h, rec, _ := newHub(t)
+	quote := &Quote{Author: "you", Text: "Shall I [deploy]\nnow?"}
+	if err := h.Handle(context.Background(), Message{Conv: "test:1", Route: Route{CWD: t.TempDir()}, Author: "alice", Text: "yes", Quote: quote}); err != nil {
+		t.Fatal(err)
+	}
+	// Brackets go, so the quote cannot close the tag early.
+	rec.expect(t, "start", `post 0 [] "echo: [alice, replying to you: \"Shall I deploy now?\"] yes"`)
+}

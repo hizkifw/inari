@@ -178,6 +178,12 @@ type message struct {
 	Voice      *file  `json:"voice"`
 	VideoNote  *file  `json:"video_note"`
 	Animation  *file  `json:"animation"`
+	// ReplyTo is the message this one replies to, and Quote the part of it
+	// the sender picked, if they picked one.
+	ReplyTo *message `json:"reply_to_message"`
+	Quote   *struct {
+		Text string `json:"text"`
+	} `json:"quote"`
 }
 
 type user struct {

@@ -31,6 +31,8 @@ type fakeTelegram struct {
 	updates  chan update
 	requests chan string
 	nextID   atomic.Int64
+	// c is the connector being served.
+	c *Connector
 }
 
 func (f *fakeTelegram) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +98,7 @@ func startWith(t *testing.T, change func(*config.Telegram)) *fakeTelegram {
 		Routes: config.Routes{DefaultCWD: t.TempDir()}}
 	change(cfg)
 	c := New(cfg, h, log)
+	f.c = c
 	h.Register(connector, c)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -199,4 +202,31 @@ func TestModelButtons(t *testing.T) {
 	f.await(t, "editMessageText", fmt.Sprintf(`"message_id":%d,"rich_message":{"markdown":"Alice (@alice) set model to Model B."}`, 9))
 	f.updates <- private("/model a")
 	f.await(t, "sendRichMessage", "set model to Model A.")
+}
+
+func TestRepliesCarryWhatTheyReplyTo(t *testing.T) {
+	f := start(t)
+	f.updates <- private("hi")
+	// The fake numbers sent messages from 1.
+	f.await(t, "sendRichMessage ", "echo: [Alice (@alice)] hi")
+	// The request shows before the connector has read the answer and
+	// remembered what it sent.
+	for deadline := time.Now().Add(5 * time.Second); f.c.recall(42, 1) == ""; {
+		if time.Now().After(deadline) {
+			t.Fatal("the sent message was not remembered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	bot := &user{ID: 1, IsBot: true, Username: "inari_bot"}
+	reply := private("what about it?")
+	reply.Message.ReplyTo = &message{MessageID: 1, From: bot, Chat: chat{ID: 42, Type: "private"}}
+	f.updates <- reply
+	f.await(t, "sendRichMessage ", `echo: [Alice (@alice), replying to you: \"echo: Alice (@alice) hi\"] what about it?`)
+
+	// Every message in a forum topic replies to the topic's first, which
+	// is not worth quoting.
+	topic := &message{From: alice, Chat: chat{ID: -100, Type: "supergroup"}, ThreadID: 5, IsTopic: true, Text: "plain",
+		ReplyTo: &message{MessageID: 5, From: alice, Chat: chat{ID: -100}, Text: "Topic created"}}
+	f.updates <- update{Message: topic}
+	f.await(t, "sendRichMessage ", `"markdown":"echo: [Alice (@alice)] plain"`)
 }

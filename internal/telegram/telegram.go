@@ -46,8 +46,10 @@ type Connector struct {
 	hub *hub.Hub
 	log *slog.Logger
 	api *api
-	// username is the bot's, for telling its commands from other bots'.
+	// username is the bot's, for telling its commands from other bots',
+	// and id its user ID, for telling its messages from others'.
 	username string
+	id       int64
 
 	mu sync.Mutex
 	// typing stops each busy conversation's typing action.
@@ -56,7 +58,15 @@ type Connector struct {
 	streams map[string]*stream
 	// lanes handle each conversation's updates in order.
 	lanes map[string]*lane
+	// sent is the text of the bot's recent messages, by "<chat>:<message>",
+	// and sentOrder their keys oldest first. A reply to a rich message
+	// does not carry its text, so this is how a reply to kon is quoted.
+	sent      map[string]string
+	sentOrder []string
 }
+
+// maxSent is how many of its messages the bot remembers the text of.
+const maxSent = 1000
 
 // New returns a connector for cfg that sends messages to h. Register it with
 // the hub before calling Run.
@@ -66,7 +76,7 @@ func New(cfg *config.Telegram, h *hub.Hub, log *slog.Logger) *Connector {
 		server = DefaultAPIURL
 	}
 	return &Connector{cfg: cfg, hub: h, log: log.With("connector", connector), api: newAPI(server, cfg.Token),
-		typing: map[string]context.CancelFunc{}, streams: map[string]*stream{}, lanes: map[string]*lane{}}
+		typing: map[string]context.CancelFunc{}, streams: map[string]*stream{}, lanes: map[string]*lane{}, sent: map[string]string{}}
 }
 
 // Run polls Telegram for updates and serves them until ctx ends.
@@ -75,7 +85,7 @@ func (c *Connector) Run(ctx context.Context) error {
 	if err := c.call(ctx, "getMe", struct{}{}, &me); err != nil {
 		return fmt.Errorf("telegram: connect: %w", err)
 	}
-	c.username = me.Username
+	c.username, c.id = me.Username, me.ID
 	c.log.Info("connected", "user", me.Username)
 	if err := c.call(ctx, "setMyCommands", map[string]any{"commands": commands}, nil); err != nil {
 		c.log.Error("register commands", "err", err)
@@ -183,7 +193,8 @@ func (c *Connector) message(m *message) {
 	if strings.TrimSpace(text) == "" && len(attachments) == 0 {
 		return
 	}
-	msg := hub.Message{Conv: connector + ":" + key, Route: route, ID: strconv.FormatInt(m.MessageID, 10), Author: authorName(m), Text: text, Attachments: attachments}
+	msg := hub.Message{Conv: connector + ":" + key, Route: route, ID: strconv.FormatInt(m.MessageID, 10), Author: authorName(m), Text: text, Attachments: attachments,
+		Quote: c.quote(m)}
 	if err := c.hub.Handle(context.Background(), msg); err != nil {
 		c.log.Error("handle message", "chat", key, "err", err)
 		c.notice(key, "⚠️ "+err.Error())
@@ -292,6 +303,59 @@ func (c *Connector) download(m *message) ([]hub.Attachment, error) {
 		out = append(out, hub.Attachment{Name: name, MIME: mime, Data: data})
 	}
 	return out, nil
+}
+
+// quote is the message m replies to, as the model is shown it, or nil when
+// it replies to none. In a forum topic every message replies to the topic's
+// first, which is no reply at all.
+func (c *Connector) quote(m *message) *hub.Quote {
+	r := m.ReplyTo
+	if r == nil || m.IsTopic && r.MessageID == m.ThreadID {
+		return nil
+	}
+	q := &hub.Quote{Text: r.Text}
+	if q.Text == "" {
+		q.Text = r.Caption
+	}
+	if m.Quote != nil && m.Quote.Text != "" {
+		q.Text = m.Quote.Text
+	}
+	switch {
+	case r.From != nil && r.From.ID == c.id:
+		q.Author = "you"
+		if q.Text == "" {
+			q.Text = c.recall(r.Chat.ID, r.MessageID)
+		}
+	case r.From != nil || r.SenderChat != nil:
+		q.Author = authorName(r)
+	default:
+		return nil
+	}
+	if q.Text == "" {
+		q.Text = "(a message without text)"
+	}
+	return q
+}
+
+// remember keeps the text of a message the bot sent, for quoting it.
+func (c *Connector) remember(chat, id int64, text string) {
+	key := fmt.Sprintf("%d:%d", chat, id)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.sent[key]; !ok {
+		c.sentOrder = append(c.sentOrder, key)
+	}
+	c.sent[key] = text
+	if len(c.sentOrder) > maxSent {
+		delete(c.sent, c.sentOrder[0])
+		c.sentOrder = c.sentOrder[1:]
+	}
+}
+
+func (c *Connector) recall(chat, id int64) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sent[fmt.Sprintf("%d:%d", chat, id)]
 }
 
 // authorName is how the model is told who spoke. A message sent as a chat,
@@ -499,6 +563,7 @@ func (m chatMessenger) sendMarkup(p part, replyTo string, markup *inlineKeyboard
 		m.c.log.Error("send message", "chat", m.t.chat, "err", err)
 		return 0
 	}
+	m.c.remember(m.t.chat, sent.MessageID, p.plain)
 	return sent.MessageID
 }
 
@@ -526,7 +591,9 @@ func (m chatMessenger) editMarkup(id int64, p part, markup *inlineKeyboard) {
 	}
 	if err != nil && !notModified(err) {
 		m.c.log.Error("edit message", "chat", m.t.chat, "err", err)
+		return
 	}
+	m.c.remember(m.t.chat, id, p.plain)
 }
 
 // draft streams p as draft id, with a button that stops the turn when the

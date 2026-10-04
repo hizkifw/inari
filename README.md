@@ -39,6 +39,9 @@ run anything kon can, as the user inari runs as. Trust accordingly.
 - **Cron jobs and reminders.** kon schedules its own with `inari cron`. A
   job runs in a fresh session and reports back to the chat it was asked
   for in; a reminder just comes back there. See [Cron jobs](#cron-jobs).
+- **Replies carry context.** A message that replies to another reaches kon
+  with who it replies to and the start of what they said, so "do that one"
+  makes sense in a busy chat.
 - **Sessions survive restarts.** inari remembers each channel's session in
   `$XDG_STATE_HOME/inari/sessions.json` and resumes it.
 
